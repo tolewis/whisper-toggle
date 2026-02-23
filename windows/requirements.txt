@@ -1,0 +1,10 @@
+# Dictation toggle
+keyboard
+sounddevice
+soundfile
+numpy
+requests
+pyperclip
+
+# Optional: Windows toast notifications (falls back to console if missing)
+winotify
