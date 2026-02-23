@@ -1,0 +1,22 @@
+[Unit]
+Description=Local Whisper API (OpenAI-compatible, faster-whisper)
+After=network.target
+
+[Service]
+Type=simple
+
+# Use the existing whisper venv (already has faster-whisper)
+ExecStart=/home/tlewis/.venvs/whisper/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8788
+WorkingDirectory=/home/tlewis/.local/share/whisper-api
+
+# Conservative defaults; override via `systemctl --user edit whisper-api`
+Environment=WHISPER_API_DEFAULT_MODEL=small.en
+Environment=WHISPER_API_DEVICE=cuda
+Environment=WHISPER_API_COMPUTE_TYPE=int8
+Environment=WHISPER_API_LANGUAGE=en
+
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
