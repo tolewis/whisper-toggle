@@ -1,4 +1,4 @@
-# build-installer.ps1 — Build the Whisper Toggle Windows installer
+# build-installer.ps1 -- Build the Whisper Toggle Windows installer
 #
 # What this does:
 #   1. Downloads a portable Python (no install required)
@@ -12,34 +12,35 @@
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-#
 
 $ErrorActionPreference = "Stop"
 
-# ── Config ──────────────────────────────────────────────────────────────────
+# -- Config --
 $PythonVersion = "3.11"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $BuildDir = "$RepoRoot\build"
 $PythonDir = "$BuildDir\python"
-$StageDir = "$BuildDir\stage"      # What goes into the installer
+$StageDir = "$BuildDir\stage"
 $OutDir = "$RepoRoot\dist"
 
-# ── Banner ──────────────────────────────────────────────────────────────────
+# -- Banner --
 Write-Host ""
-Write-Host "  ╔═══════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║   Whisper Toggle — Installer Builder          ║" -ForegroundColor Cyan
-Write-Host "  ╚═══════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "  =================================================" -ForegroundColor Cyan
+Write-Host "    Whisper Toggle -- Installer Builder" -ForegroundColor Cyan
+Write-Host "  =================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Step 1: Get portable Python ────────────────────────────────────────────
+# -- Step 1: Get portable Python --
 if (Test-Path "$PythonDir\python.exe") {
-    Write-Host "  [1/5] Python already downloaded — skipping" -ForegroundColor Green
+    Write-Host "  [1/5] Python already downloaded -- skipping" -ForegroundColor Green
 } else {
     Write-Host "  [1/5] Downloading portable Python $PythonVersion ..." -ForegroundColor Yellow
 
     # Query GitHub for latest python-build-standalone release
     $headers = @{}
-    if ($env:GITHUB_TOKEN) { $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN" }
+    if ($env:GITHUB_TOKEN) {
+        $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+    }
 
     $releasesUrl = "https://api.github.com/repos/indygreg/python-build-standalone/releases?per_page=10"
     $releases = Invoke-RestMethod -Uri $releasesUrl -Headers $headers
@@ -47,7 +48,7 @@ if (Test-Path "$PythonDir\python.exe") {
     $asset = $null
     foreach ($release in $releases) {
         $asset = $release.assets | Where-Object {
-            $_.name -match "cpython-3\.11\.\d+\+\d+-x86_64-pc-windows-msvc-install_only_stripped\.tar\.gz$"
+            $_.name -match 'cpython-3\.11\.\d+\+\d+-x86_64-pc-windows-msvc-install_only_stripped\.tar\.gz$'
         } | Select-Object -First 1
         if ($asset) { break }
     }
@@ -62,7 +63,8 @@ if (Test-Path "$PythonDir\python.exe") {
     $archivePath = "$BuildDir\python-standalone.tar.gz"
     New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
-    Write-Host "  Downloading ($([math]::Round($asset.size / 1MB, 1)) MB)..."
+    $sizeMB = [math]::Round($asset.size / 1MB, 1)
+    Write-Host "  Downloading ($sizeMB MB)..."
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath
 
     Write-Host "  Extracting..."
@@ -70,7 +72,7 @@ if (Test-Path "$PythonDir\python.exe") {
 
     # python-build-standalone extracts to a "python" folder
     if (-not (Test-Path "$PythonDir\python.exe")) {
-        # Some builds extract to "python/install" or similar — find it
+        # Some builds extract to "python/install" or similar -- find it
         $found = Get-ChildItem -Path $BuildDir -Recurse -Filter "python.exe" |
             Where-Object { $_.Directory.Name -ne "Scripts" } |
             Select-Object -First 1
@@ -89,9 +91,7 @@ if (Test-Path "$PythonDir\python.exe") {
     Write-Host "  Python ready at $PythonDir" -ForegroundColor Green
 }
 
-$pip = "$PythonDir\python.exe -m pip"
-
-# ── Step 2: Install dependencies ───────────────────────────────────────────
+# -- Step 2: Install dependencies --
 Write-Host ""
 Write-Host "  [2/5] Installing dependencies..." -ForegroundColor Yellow
 
@@ -100,17 +100,15 @@ Write-Host "  [2/5] Installing dependencies..." -ForegroundColor Yellow
 
 # API server deps
 Write-Host "    API server: faster-whisper, fastapi, uvicorn"
-& "$PythonDir\python.exe" -m pip install --quiet `
-    faster-whisper fastapi uvicorn
+& "$PythonDir\python.exe" -m pip install --quiet faster-whisper fastapi uvicorn
 
 # Tray app deps
 Write-Host "    Tray app: keyboard, sounddevice, soundfile, pystray, etc."
-& "$PythonDir\python.exe" -m pip install --quiet `
-    keyboard sounddevice soundfile numpy requests pyperclip pystray Pillow
+& "$PythonDir\python.exe" -m pip install --quiet keyboard sounddevice soundfile numpy requests pyperclip pystray Pillow
 
 Write-Host "  Dependencies installed" -ForegroundColor Green
 
-# ── Step 3: Stage files ────────────────────────────────────────────────────
+# -- Step 3: Stage files --
 Write-Host ""
 Write-Host "  [3/5] Staging files..." -ForegroundColor Yellow
 
@@ -127,19 +125,24 @@ Copy-Item "$RepoRoot\windows\whisper-toggle-tray.pyw" "$StageDir\"
 Write-Host "  Staged to $StageDir" -ForegroundColor Green
 
 # Calculate total size
-$totalSize = [math]::Round(
-    (Get-ChildItem $StageDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 0
-)
+$totalBytes = (Get-ChildItem $StageDir -Recurse | Measure-Object -Property Length -Sum).Sum
+$totalSize = [math]::Round($totalBytes / 1MB, 0)
 Write-Host "  Total bundle size: ~${totalSize} MB"
 
-# ── Step 4: Compile installer (if Inno Setup available) ────────────────────
+# -- Step 4: Compile installer (if Inno Setup available) --
 Write-Host ""
 
-$iscc = @(
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-    "ISCC.exe"
-) | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+$isccPaths = @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+)
+$iscc = $null
+foreach ($p in $isccPaths) {
+    if (Test-Path $p) {
+        $iscc = $p
+        break
+    }
+}
 
 if ($iscc) {
     Write-Host "  [4/5] Compiling installer with Inno Setup..." -ForegroundColor Yellow
@@ -153,15 +156,15 @@ if ($iscc) {
         Write-Host ""
         Write-Host "  [5/5] Done!" -ForegroundColor Green
         Write-Host ""
-        Write-Host "  ╔═══════════════════════════════════════════════╗" -ForegroundColor Green
-        Write-Host "  ║   Installer: $($installer.Name) ($installerSize MB)" -ForegroundColor Green
-        Write-Host "  ║   Location:  $OutDir\" -ForegroundColor Green
-        Write-Host "  ╚═══════════════════════════════════════════════╝" -ForegroundColor Green
+        Write-Host "  =================================================" -ForegroundColor Green
+        Write-Host "    Installer: $($installer.Name) ($installerSize MB)" -ForegroundColor Green
+        Write-Host "    Location:  $OutDir\" -ForegroundColor Green
+        Write-Host "  =================================================" -ForegroundColor Green
     } else {
         Write-Host "  Inno Setup compilation failed (exit code $LASTEXITCODE)" -ForegroundColor Red
     }
 } else {
-    Write-Host "  [4/5] Inno Setup not found — skipping installer compilation" -ForegroundColor Yellow
+    Write-Host "  [4/5] Inno Setup not found -- skipping installer compilation" -ForegroundColor Yellow
     Write-Host "        Install from: https://jrsoftware.org/isinfo.php" -ForegroundColor DarkGray
     Write-Host "        Then re-run this script to build the .exe installer" -ForegroundColor DarkGray
     Write-Host ""
