@@ -1,0 +1,67 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install keyboard sounddevice soundfile numpy requests pyperclip winotify
+
+      - name: Build exe
+        run: |
+          pyinstaller `
+            --onefile `
+            --name "dictate-toggle" `
+            --console `
+            --noconfirm `
+            --clean `
+            --hidden-import "winotify" `
+            --hidden-import "sounddevice" `
+            --hidden-import "soundfile" `
+            --hidden-import "_sounddevice_data" `
+            --hidden-import "_soundfile_data" `
+            windows/dictate-toggle.py
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-toggle-windows
+          path: dist/dictate-toggle.exe
+
+      - name: Create release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/dictate-toggle.exe
+            app.py
+            windows/start-api.bat
+            windows/requirements.txt
+            windows/install.ps1
+          body: |
+            ## Whisper Toggle ${{ github.ref_name }}
+
+            ### Windows Quick Start
+            1. Download `dictate-toggle.exe` and `start-api.bat` and `app.py`
+            2. Set up the API: `pip install faster-whisper fastapi uvicorn` then run `start-api.bat`
+            3. Run `dictate-toggle.exe`
+            4. Press **Ctrl+`** to toggle dictation
+
+            ### Full installer
+            Run `install.ps1` for automated setup, or see [Windows Setup Guide](docs/windows-setup.md).
