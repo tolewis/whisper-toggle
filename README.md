@@ -1,120 +1,107 @@
-# Whisper-Toggle
+# Whisper Toggle
 
-Local push-to-talk voice dictation. Press a hotkey to start recording, press again to transcribe and auto-paste into the focused window.
+```
+ __        ___     _                       _____                 _
+ \ \      / / |__ (_)___ _ __   ___ _ __  |_   _|__   __ _  __ _| | ___
+  \ \ /\ / /| '_ \| / __| '_ \ / _ \ '__|  | |/ _ \ / _` |/ _` | |/ _ \
+   \ V  V / | | | | \__ \ |_) |  __/ |     | | (_) | (_| | (_| | |  __/
+    \_/\_/  |_| |_|_|___/ .__/ \___|_|     |_|\___/ \__, |\__, |_|\___|
+                         |_|                          |___/ |___/
+```
 
-Runs a warm [faster-whisper](https://github.com/SYSTRAN/faster-whisper) API on localhost — no cold-start penalty, no cloud dependency, no API keys.
+**Talk to your computer. It types for you.**
 
-**Platforms:** Linux (GNOME/PipeWire) · Windows 11
+Whisper Toggle turns your voice into text — instantly, privately, in any app. No cloud. No subscription. No sending your voice to anyone. Everything runs on your machine.
+
+Press a hotkey, say what you want, press it again. Your words appear wherever your cursor is. Discord, Google Docs, your code editor, a terminal — doesn't matter. It just works.
+
+## Why You'll Love This
+
+- **It's fast.** ~2 seconds from the moment you stop talking to text on screen.
+- **It's private.** Your voice never leaves your computer. No accounts, no API keys, no data collection.
+- **It works everywhere.** Any app, any text field. If you can type there, you can dictate there.
+- **It's free.** Open source, forever. No trial period, no premium tier.
 
 ## How It Works
 
 ```
-Hotkey press 1  →  mic starts recording (16kHz mono WAV)
-Hotkey press 2  →  recording stops → WAV sent to local API → text pasted
+  Press Ctrl+`         🎙️ "Recording..."
+  Say your thing
+  Press Ctrl+` again   ⚡ "Processing..."
+  Text appears ✨       Right where your cursor was
 ```
 
-Typical latency for a 10-second clip: **~1.5–2.5s** (stop → transcribe → paste).
+Under the hood, it uses [OpenAI's Whisper](https://github.com/openai/whisper) speech recognition model running locally on your GPU (or CPU). A small server keeps the model loaded in memory so transcription is near-instant.
 
-## Architecture
+## Get Started
 
+### Windows
+
+> Full guide: **[docs/windows-setup.md](docs/windows-setup.md)**
+
+```powershell
+git clone https://github.com/tolewis/Whisper-Toggle.git
+cd Whisper-Toggle
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
 ```
-┌──────────────┐     ┌────────────────────┐     ┌─────────────────────────┐
-│  Hotkey       │     │  dictate-toggle    │     │  whisper-api (:8788)    │
-│  (OS-level)   │────▶│  .sh (Linux)       │────▶│  faster-whisper         │
-│               │     │  .py (Windows)     │     │  small.en · CUDA int8   │
-└──────────────┘     │  record → POST     │     │  model warm in VRAM     │
-                      │  → clipboard       │     └─────────────────────────┘
-                      │  → auto-paste      │
-                      └────────────────────┘
-```
 
-The API server (`app.py`) is shared across platforms. Platform-specific scripts handle recording, hotkey binding, and paste.
-
-## Quick Start
+Default hotkey: **Ctrl+\`** (the backtick key, above Tab)
 
 ### Linux
 
+> Full guide: **[docs/linux-setup.md](docs/linux-setup.md)**
+
 ```bash
-# Install deps, deploy service, bind hotkeys
-# Full guide: docs/linux-setup.md
 sudo apt install xdotool xclip x11-utils libnotify-bin curl
 cp linux/dictate-toggle.sh ~/bin/ && chmod +x ~/bin/dictate-toggle.sh
 ```
 
 Default hotkeys: **Super+H** and **Ctrl+\`**
 
-### Windows
-
-```powershell
-# Run the installer (creates venv, installs deps, deploys files)
-# Full guide: docs/windows-setup.md
-powershell -ExecutionPolicy Bypass -File windows\install.ps1
-```
-
-Default hotkey: **Ctrl+\`**
-
-## Repo Structure
+## What's in the Box
 
 ```
 Whisper-Toggle/
-├── README.md                  This file
-├── app.py                     Shared API server (OpenAI-compatible)
-├── linux/
-│   ├── dictate-toggle.sh      Linux entry point (bash, pw-record, xdotool)
-│   └── whisper-api.service    systemd user unit
-├── windows/
-│   ├── dictate-toggle.py      Windows entry point (keyboard, sounddevice)
-│   ├── requirements.txt       Python dependencies
-│   ├── start-api.bat          API server launcher
-│   └── install.ps1            Automated installer
-└── docs/
-    ├── linux-setup.md         Full Linux setup guide
-    └── windows-setup.md       Full Windows setup guide
+├── app.py                     The brain — local Whisper API server
+├── linux/                     Linux version (bash script)
+├── windows/                   Windows version (Python + installer)
+└── docs/                      Setup guides for each platform
 ```
 
-## Platform Comparison
+## Requirements
 
-| Component | Linux | Windows |
-|-----------|-------|---------|
-| Recording | `pw-record` (PipeWire) | `sounddevice` (PortAudio/WASAPI) |
-| Hotkey | GNOME custom keybinding | `keyboard` library (global hook) |
-| Paste | `xdotool key ctrl+v` | `keyboard.send('ctrl+v')` |
-| Clipboard | `xclip` | `pyperclip` |
-| Notifications | `notify-send` | `winotify` (toast) |
-| API persistence | systemd user unit | `start-api.bat` (manual or Task Scheduler) |
-| Terminal detection | Yes (xprop WM_CLASS) | No (Ctrl+V works everywhere) |
+- **An NVIDIA GPU** makes it fast (~2 sec). No GPU? It still works on CPU, just slower (~10-15 sec).
+- **Python 3.9+** for the transcription server.
+- **A microphone.** Obviously.
 
-## API Server
+## FAQ
 
-Both platforms share `app.py` — a FastAPI wrapper around faster-whisper that implements the OpenAI `/v1/audio/transcriptions` endpoint.
+**Will this work with my Bluetooth headset / USB mic / webcam mic?**
+Yes. Whatever Windows or Linux sees as your default microphone, Whisper Toggle uses it.
 
-```bash
-# Health check
-curl http://127.0.0.1:8788/health
+**Does it work in games / full-screen apps?**
+The hotkey is system-wide, so yes — as long as the game doesn't capture all keyboard input.
 
-# Manual transcription
-curl -X POST http://127.0.0.1:8788/v1/audio/transcriptions \
-  -F "file=@audio.wav" -F "model=small.en" -F "language=en"
-```
+**Can I change the hotkey?**
+Yes. On Windows: `dictate-toggle.py --hotkey "ctrl+shift+h"` (or whatever combo you want). On Linux: edit the GNOME keybinding.
 
-Environment variables (set in systemd unit or `start-api.bat`):
+**How accurate is it?**
+Whisper is remarkably good. It handles accents, mumbling, and background noise better than most cloud services. Punctuation and capitalization are automatic.
 
-| Variable | Default | Options |
-|----------|---------|---------|
-| `WHISPER_API_DEFAULT_MODEL` | `small.en` | `tiny.en`, `base.en`, `small.en`, `medium.en` |
-| `WHISPER_API_DEVICE` | `cuda` | `cuda`, `cpu` |
-| `WHISPER_API_COMPUTE_TYPE` | `int8` | `int8`, `float16`, `float32` |
-| `WHISPER_API_LANGUAGE` | `en` | Any Whisper-supported language code |
+**How much disk space does it need?**
+About 3-4 GB total (Python environment + Whisper model). The model downloads automatically on first run.
 
 ## Version History
 
-| Version | Date | What changed |
-|---------|------|-------------|
-| **v1.0** | 2026-02-23 | Full rewrite. Warm API, PipeWire, auto-paste, Windows support. |
-| v0.3 | 2025 | whisper-hotkey.sh + whisper-transcribe.py (cold model, broken) |
-| v0.2 | 2025 | whisper_toggle.sh variants (ALSA, no API) |
-| v0.1 | 2025 | whisper_clip.sh (first prototype) |
+| Version | Date | What's new |
+|---------|------|-----------|
+| **1.0** | Feb 2026 | Full rewrite. Warm API, auto-paste, Windows + Linux support. |
+| 0.1–0.3 | 2025 | Early prototypes. Slow, unreliable. Archived. |
 
 ## License
 
-MIT
+MIT — do whatever you want with it.
+
+---
+
+*Built by [Tim Lewis](https://github.com/tolewis). Transcription powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).*
