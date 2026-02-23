@@ -1,4 +1,4 @@
-name: Build Windows
+name: Build Windows Installer
 
 on:
   push:
@@ -13,55 +13,93 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Download portable Python + install deps
+        shell: pwsh
         run: |
-          pip install pyinstaller
-          pip install keyboard sounddevice soundfile numpy requests pyperclip winotify
+          # Run the build script up to the staging step (skip Inno Setup)
+          $ErrorActionPreference = "Stop"
+          $BuildDir = "build"
+          $PythonDir = "$BuildDir\python"
+          $StageDir = "$BuildDir\stage"
 
-      - name: Build exe
+          # Download python-build-standalone
+          $releases = Invoke-RestMethod "https://api.github.com/repos/indygreg/python-build-standalone/releases?per_page=10"
+          $asset = $null
+          foreach ($release in $releases) {
+              $asset = $release.assets | Where-Object {
+                  $_.name -match "cpython-3\.11\.\d+\+\d+-x86_64-pc-windows-msvc-install_only_stripped\.tar\.gz$"
+              } | Select-Object -First 1
+              if ($asset) { break }
+          }
+
+          Write-Host "Downloading $($asset.name)..."
+          New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$BuildDir\python.tar.gz"
+          tar -xzf "$BuildDir\python.tar.gz" -C $BuildDir
+
+          # Find python.exe
+          $found = Get-ChildItem -Path $BuildDir -Recurse -Filter "python.exe" |
+              Where-Object { $_.Directory.Name -ne "Scripts" } | Select-Object -First 1
+          if ($found.Directory.FullName -ne (Resolve-Path $PythonDir -ErrorAction SilentlyContinue)) {
+              if (Test-Path $PythonDir) { Remove-Item $PythonDir -Recurse -Force }
+              Move-Item $found.Directory.FullName $PythonDir -Force
+          }
+
+          # Install all deps
+          & "$PythonDir\python.exe" -m pip install --upgrade pip --quiet
+          & "$PythonDir\python.exe" -m pip install --quiet `
+              faster-whisper fastapi uvicorn `
+              keyboard sounddevice soundfile numpy requests pyperclip pystray Pillow
+
+          # Stage
+          New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
+          Copy-Item $PythonDir "$StageDir\python" -Recurse
+          Copy-Item "app.py" "$StageDir\"
+          Copy-Item "windows\whisper-toggle-tray.pyw" "$StageDir\"
+
+      - name: Install Inno Setup
+        shell: pwsh
         run: |
-          pyinstaller `
-            --onefile `
-            --name "dictate-toggle" `
-            --console `
-            --noconfirm `
-            --clean `
-            --hidden-import "winotify" `
-            --hidden-import "sounddevice" `
-            --hidden-import "soundfile" `
-            --hidden-import "_sounddevice_data" `
-            --hidden-import "_soundfile_data" `
-            windows/dictate-toggle.py
+          choco install innosetup --yes --no-progress
 
-      - name: Upload exe artifact
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"dist" "windows\installer.iss"
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-toggle-windows
-          path: dist/dictate-toggle.exe
+          name: WhisperToggle-Setup
+          path: dist/WhisperToggle-Setup-*.exe
 
-      - name: Create release (on tag push)
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/dictate-toggle.exe
-            app.py
-            windows/start-api.bat
-            windows/requirements.txt
-            windows/install.ps1
+          files: dist/WhisperToggle-Setup-*.exe
           body: |
             ## Whisper Toggle ${{ github.ref_name }}
 
-            ### Windows Quick Start
-            1. Download `dictate-toggle.exe` and `start-api.bat` and `app.py`
-            2. Set up the API: `pip install faster-whisper fastapi uvicorn` then run `start-api.bat`
-            3. Run `dictate-toggle.exe`
-            4. Press **Ctrl+`** to toggle dictation
+            **Download `WhisperToggle-Setup-1.0.exe`, run it, done.**
 
-            ### Full installer
-            Run `install.ps1` for automated setup, or see [Windows Setup Guide](docs/windows-setup.md).
+            No Python install needed. No terminal. No configuration.
+            Everything is bundled in the installer.
+
+            After install, a green circle appears in your system tray.
+            Press **Ctrl+`** to start talking.
+
+            ### What's included
+            - Local Whisper AI speech recognition (runs on your GPU or CPU)
+            - System tray app with global hotkey
+            - Auto-paste into any application
+
+            ### Requirements
+            - Windows 10/11 (64-bit)
+            - NVIDIA GPU recommended (CPU works but slower)

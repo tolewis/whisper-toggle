@@ -1,0 +1,23 @@
+Welcome to Whisper Toggle!
+
+Talk to your computer. It types for you.
+
+This installer sets up everything you need:
+
+  - A local AI speech recognition engine (Whisper)
+  - A system tray app that listens for your hotkey
+  - Auto-paste into any application
+
+After installation:
+  1. A green circle appears in your system tray
+  2. Press Ctrl+` (backtick, the key above Tab)
+  3. Say something
+  4. Press Ctrl+` again
+  5. Your words appear where your cursor is
+
+No internet required after install. No accounts. No subscriptions.
+Your voice never leaves your computer.
+
+Note: First launch takes 1-2 minutes while the AI model loads.
+      An NVIDIA GPU makes transcription fast (~2 sec).
+      No GPU? It still works, just slower (~10-15 sec).
