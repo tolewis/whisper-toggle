@@ -11,6 +11,8 @@
 
 **Talk to your computer. It types for you.**
 
+> **Platform status:** Linux is stable and working. Windows is in active development — the installer builds and runs but the tray app needs debugging. See [issues](https://github.com/tolewis/Whisper-Toggle/issues) for current status.
+
 Whisper Toggle turns your voice into text — instantly, privately, in any app. No cloud. No subscription. No sending your voice to anyone. Everything runs on your machine.
 
 Press a hotkey, say what you want, press it again. Your words appear wherever your cursor is. Discord, Google Docs, your code editor, a terminal — doesn't matter. It just works.
@@ -35,19 +37,7 @@ Under the hood, it uses [OpenAI's Whisper](https://github.com/openai/whisper) sp
 
 ## Get Started
 
-### Windows
-
-> Full guide: **[docs/windows-setup.md](docs/windows-setup.md)**
-
-```powershell
-git clone https://github.com/tolewis/Whisper-Toggle.git
-cd Whisper-Toggle
-powershell -ExecutionPolicy Bypass -File windows\install.ps1
-```
-
-Default hotkey: **Ctrl+\`** (the backtick key, above Tab)
-
-### Linux
+### Linux (stable)
 
 > Full guide: **[docs/linux-setup.md](docs/linux-setup.md)**
 
@@ -57,6 +47,10 @@ cp linux/dictate-toggle.sh ~/bin/ && chmod +x ~/bin/dictate-toggle.sh
 ```
 
 Default hotkeys: **Super+H** and **Ctrl+\`**
+
+### Windows (in development)
+
+> The installer builds and runs, but the tray app and hotkey integration are still being debugged. Not ready for daily use yet. See **[docs/windows-setup.md](docs/windows-setup.md)** if you want to help test.
 
 ## What's in the Box
 
