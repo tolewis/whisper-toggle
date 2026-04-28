@@ -10,7 +10,7 @@ set -euo pipefail
 WHISPER_API="${WHISPER_API:-http://127.0.0.1:8788/v1/audio/transcriptions}"
 WHISPER_STREAMING="${WHISPER_STREAMING:-1}"
 WHISPER_STREAMING_ENDPOINT="${WHISPER_STREAMING_ENDPOINT:-ws://127.0.0.1:8788/v1/audio/stream}"
-WHISPER_OSD="${WHISPER_OSD:-1}"
+WHISPER_OSD="${WHISPER_OSD:-0}"
 WHISPER_OSD_COMMAND="${WHISPER_OSD_COMMAND:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_OSD_BIN="$SCRIPT_DIR/whisper-osd.py"
@@ -217,7 +217,11 @@ start_streaming() {
     fi
 
     local partial_arg=()
-    if [[ "$WHISPER_OSD" == "0" ]]; then
+    # Decoupled from WHISPER_OSD: the iPhone/Windows-style UX is no OSD AND
+    # no in-place partial typing. WS client streams partials silently, types
+    # the final on commit. Set WHISPER_PARTIALS_INLINE=1 to re-enable jankier
+    # in-place partial typing (BackSpace + retype on revisions).
+    if [[ "${WHISPER_PARTIALS_INLINE:-0}" == "1" ]]; then
         partial_arg=(--xdotool-partials)
     fi
 
