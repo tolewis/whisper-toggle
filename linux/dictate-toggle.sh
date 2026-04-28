@@ -230,11 +230,11 @@ start_streaming() {
     local client_pid=$!
     echo "$client_pid" > "$CLIENT_PID_FILE"
 
-    pw-record \
-        --rate 16000 \
-        --channels 1 \
-        --format s16 \
-        --raw \
+    arecord \
+        -t raw \
+        -f S16_LE \
+        -r 16000 \
+        -c 1 \
         - 9>&- > "$PCM_FIFO" &
 
     local rec_pid=$!
