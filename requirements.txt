@@ -1,0 +1,12 @@
+fastapi==0.131.0
+uvicorn[standard]==0.41.0
+python-multipart>=0.0.20
+faster-whisper==1.2.1
+ctranslate2==4.7.1
+numpy>=1.26
+websockets>=15.0
+
+# ufal whisper_streaming pin:
+# https://github.com/ufal/whisper_streaming.git@6da90b44b7e50d79695e68166d2a2c7609c75abb
+# Upstream is source-only, with no setup.py or pyproject.toml. scripts/deploy.sh
+# clones this exact commit into the deployed app's vendor/whisper_streaming dir.

@@ -35,6 +35,56 @@ Press a hotkey, say what you want, press it again. Your words appear wherever yo
 
 Under the hood, it uses [OpenAI's Whisper](https://github.com/openai/whisper) speech recognition model running locally on your GPU (or CPU). A small server keeps the model loaded in memory so transcription is near-instant.
 
+## Streaming v2
+
+Linux now defaults to streaming transcription:
+
+- `WHISPER_STREAMING=1` uses `WS /v1/audio/stream` for live partials and final text.
+- `WHISPER_STREAMING=0` keeps the v1 batch path, `POST /v1/audio/transcriptions`.
+- `WHISPER_STREAMING_ENDPOINT` defaults to `ws://127.0.0.1:8788/v1/audio/stream`.
+- `WHISPER_OSD=1` shows partial and confirmed text in the Tk overlay.
+- `WHISPER_OSD=0` types partial revisions in place with `xdotool`; this is available for testing but less smooth.
+
+If the streaming WebSocket cannot connect within 1 second, the Linux toggle logs one stderr line and starts a v1 batch recording instead.
+
+Manual smoke test for the streaming endpoint:
+
+```bash
+python3 - <<'PY'
+import asyncio, json, websockets
+
+async def main():
+    async with websockets.connect("ws://127.0.0.1:8788/v1/audio/stream") as ws:
+        await ws.send(b"\0\0" * 16000)
+        await ws.send(json.dumps({"type": "end"}))
+        async for msg in ws:
+            print(msg)
+            if json.loads(msg).get("type") == "final":
+                break
+
+asyncio.run(main())
+PY
+```
+
+Architecture diff:
+
+- v1 records a WAV with `pw-record`, sends it to `POST /v1/audio/transcriptions`, then pastes the returned `text`.
+- v2 streams 16 kHz mono PCM int16 frames to `WS /v1/audio/stream`, renders `partial` and `confirmed` messages in the OSD, then types only the `final` text.
+- Both paths share the same cached `faster-whisper` `WhisperModel`; the streaming path uses ufal `whisper_streaming` LocalAgreement-2 logic around that model.
+
+Production staging:
+
+```bash
+./scripts/deploy.sh
+```
+
+The deploy script copies files and installs pinned deps, but it does not restart the service. Cutover is explicit:
+
+```bash
+sudo systemctl restart whisper-api
+sleep 2 && curl -s http://127.0.0.1:8788/v1/health || echo "FAIL"
+```
+
 ## Get Started
 
 ### Linux (stable)
@@ -58,6 +108,8 @@ Default hotkeys: **Super+H** and **Ctrl+\`**
 Whisper-Toggle/
 ├── app.py                     The brain — local Whisper API server
 ├── linux/                     Linux version (bash script)
+├── scripts/                   Deployment staging
+├── tests/                     Streaming and toggle tests
 ├── windows/                   Windows version (Python + installer)
 └── docs/                      Setup guides for each platform
 ```

@@ -26,11 +26,20 @@ Notes:
 
 from __future__ import annotations
 
+import asyncio
+import importlib
+import importlib.util
+import json
 import os
+import sys
 import tempfile
+import time
+from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, File, Form, UploadFile
+import numpy as np
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 
 from faster_whisper import WhisperModel
 
@@ -44,6 +53,9 @@ DEFAULT_MODEL = env("WHISPER_API_DEFAULT_MODEL", "small.en")
 DEFAULT_DEVICE = env("WHISPER_API_DEVICE", "cuda")  # set to cpu if needed
 DEFAULT_COMPUTE = env("WHISPER_API_COMPUTE_TYPE", "int8")
 DEFAULT_LANG = env("WHISPER_API_LANGUAGE", "en")
+STREAM_SAMPLE_RATE = int(env("WHISPER_STREAM_SAMPLE_RATE", "16000"))
+STREAM_PARTIAL_INTERVAL = float(env("WHISPER_STREAM_PARTIAL_INTERVAL", "0.25"))
+STREAM_BUFFER_TRIM_SEC = float(env("WHISPER_STREAM_BUFFER_TRIM_SEC", "15"))
 OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
@@ -72,6 +84,111 @@ def _truthy(v: Optional[str]) -> bool:
     if v is None:
         return False
     return str(v).strip().lower() in ("1", "true", "yes", "y", "on", "word", "segment")
+
+
+def _load_whisper_online_module():
+    """Load ufal whisper_streaming's whisper_online module.
+
+    The upstream repository is not a Python package, so deploy.sh clones the
+    pinned source under vendor/whisper_streaming. Normal imports are tried first
+    so developer installs can still provide the module on PYTHONPATH.
+    """
+
+    for module_name in ("whisper_online", "whisper_streaming.whisper_online"):
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            pass
+
+    candidates = []
+    configured = os.getenv("WHISPER_STREAMING_PATH")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(Path(__file__).resolve().parent / "vendor" / "whisper_streaming")
+
+    for base in candidates:
+        source = base / "whisper_online.py"
+        if not source.exists():
+            continue
+        if str(base) not in sys.path:
+            sys.path.insert(0, str(base))
+        spec = importlib.util.spec_from_file_location("whisper_online", source)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("whisper_online", module)
+        spec.loader.exec_module(module)
+        return module
+
+    raise RuntimeError(
+        "whisper_streaming is not installed. Run scripts/deploy.sh to install "
+        "the pinned ufal whisper_streaming source."
+    )
+
+
+class StreamingASRProcessor:
+    def __init__(self, model_name: str, device: str, compute_type: str, language: str):
+        whisper_online = _load_whisper_online_module()
+        shared_model = get_model(model_name, device, compute_type)
+
+        class SharedFasterWhisperASR(whisper_online.FasterWhisperASR):
+            def __init__(self, lan: str, model: WhisperModel):
+                self._shared_model = model
+                super().__init__(lan, modelsize=model_name)
+
+            def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
+                return self._shared_model
+
+        asr = SharedFasterWhisperASR(language, shared_model)
+        self.online = whisper_online.OnlineASRProcessor(
+            asr,
+            buffer_trimming=("segment", STREAM_BUFFER_TRIM_SEC),
+        )
+        self.confirmed_text = ""
+
+    def insert_pcm(self, pcm: bytes) -> float:
+        usable = len(pcm) - (len(pcm) % 2)
+        if usable <= 0:
+            return 0.0
+        audio = np.frombuffer(pcm[:usable], dtype=np.int16).astype(np.float32) / 32768.0
+        self.online.insert_audio_chunk(audio)
+        return float(audio.size) / STREAM_SAMPLE_RATE
+
+    def process(self) -> tuple[Optional[dict], Optional[dict]]:
+        start_t, end_t, text = self.online.process_iter()
+        confirmed = None
+        if text:
+            self.confirmed_text = (self.confirmed_text + text).strip()
+            confirmed = {
+                "type": "confirmed",
+                "text": text.strip(),
+                "start_t": round(float(start_t or 0.0), 3),
+                "end_t": round(float(end_t or 0.0), 3),
+            }
+
+        p_start, p_end, p_text = self.online.to_flush(self.online.transcript_buffer.complete())
+        partial = None
+        if p_text:
+            partial = {
+                "type": "partial",
+                "text": p_text.strip(),
+                "start_t": round(float(p_start or 0.0), 3),
+                "end_t": round(float(p_end or 0.0), 3),
+            }
+        return confirmed, partial
+
+    def finish(self) -> str:
+        _start_t, _end_t, final_flush = self.online.finish()
+        return (self.confirmed_text + final_flush).strip()
+
+
+def create_stream_processor(model_name: str, device: str, compute_type: str, language: str):
+    return StreamingASRProcessor(model_name, device, compute_type, language)
+
+
+async def _send_json(websocket: WebSocket, payload: dict):
+    if websocket.application_state == WebSocketState.CONNECTED:
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
 
 
 @app.post("/v1/audio/transcriptions")
@@ -180,3 +297,70 @@ def transcriptions(
             "words": out_words,
             "task": "transcribe",
         }
+
+
+@app.websocket("/v1/audio/stream")
+async def audio_stream(websocket: WebSocket):
+    await websocket.accept()
+
+    model_name = OPENAI_MODEL_ALIASES.get(
+        websocket.query_params.get("model", ""),
+        websocket.query_params.get("model") or DEFAULT_MODEL,
+    )
+    lang = websocket.query_params.get("language") or DEFAULT_LANG
+    processor = create_stream_processor(model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang)
+    audio_duration = 0.0
+    last_partial_at = 0.0
+    last_partial_text = ""
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            if message.get("bytes") is not None:
+                audio_duration += processor.insert_pcm(message["bytes"] or b"")
+            elif message.get("text") is not None:
+                try:
+                    control = json.loads(message["text"] or "{}")
+                except json.JSONDecodeError:
+                    await _send_json(websocket, {"type": "error", "error": "invalid_json"})
+                    continue
+                if control.get("type") == "end":
+                    break
+                await _send_json(websocket, {"type": "error", "error": "unknown_control"})
+                continue
+
+            now = time.monotonic()
+            if now - last_partial_at < STREAM_PARTIAL_INTERVAL:
+                continue
+
+            confirmed, partial = await asyncio.to_thread(processor.process)
+            last_partial_at = now
+            if confirmed is not None:
+                await _send_json(websocket, confirmed)
+            if partial is not None and partial["text"] != last_partial_text:
+                last_partial_text = partial["text"]
+                await _send_json(websocket, partial)
+
+        confirmed, partial = await asyncio.to_thread(processor.process)
+        if confirmed is not None:
+            await _send_json(websocket, confirmed)
+        if partial is not None and partial["text"] != last_partial_text:
+            await _send_json(websocket, partial)
+
+        final_text = await asyncio.to_thread(processor.finish)
+        await _send_json(
+            websocket,
+            {
+                "type": "final",
+                "text": final_text,
+                "duration": round(audio_duration, 3),
+            },
+        )
+    except WebSocketDisconnect:
+        return
+    finally:
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close()
