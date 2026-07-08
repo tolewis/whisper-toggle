@@ -278,24 +278,28 @@ def transcriptions(
     )
     use_vad = True if vad_filter is None else _truthy(vad_filter)
 
-    with tempfile.NamedTemporaryFile(suffix=os.path.splitext(file.filename or "audio.wav")[1], delete=True) as tmp:
+    # Windows cannot open a NamedTemporaryFile that is still held by this process
+    # (PermissionError from PyAV). Write, close, then transcribe, then delete.
+    suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    tmp_path = tmp.name
+    try:
         tmp.write(file.file.read())
         tmp.flush()
+        tmp.close()
 
         whisper = get_model(model_name, device, compute_type)
         segments_iter, info = whisper.transcribe(
-            tmp.name,
+            tmp_path,
             language=lang,
             vad_filter=use_vad,
             word_timestamps=want_words,
         )
 
         if not want_words:
-            # Back-compat path: flat text only.
             text = "".join([s.text for s in segments_iter]).strip()
             return {"text": text}
 
-        # Verbose path: build segments + aggregated words list.
         out_segments = []
         out_words = []
         for idx, s in enumerate(segments_iter):
@@ -330,6 +334,11 @@ def transcriptions(
             "words": out_words,
             "task": "transcribe",
         }
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 @app.websocket("/v1/audio/stream")
