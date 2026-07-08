@@ -170,7 +170,7 @@ class DeviceResolver:
         vulkan = self.probe_vulkan()
         if vulkan.ok:
             return self._vulkan(vulkan)
-        return self._cpu("auto → cpu")
+        return self._cpu("auto -> cpu")
 
     def _model_for(self, device: str) -> str:
         if self.model_override:
