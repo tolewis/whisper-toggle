@@ -1,13 +1,9 @@
-"""Windows-native Win+H ownership.
+"""Windows-native Win+H ownership via low-level keyboard hook only.
 
-Design:
-- Claim Win+H with a low-level keyboard hook that *swallows* the chord only while
-  Whisper Toggle is healthy and ready.
-- If we cannot claim / are not ready, do nothing — Windows Voice Typing keeps Win+H.
-- Also best-effort toggle the OS "voice typing launcher" registry while we own the key,
-  restored on release.
-
-This is intentionally separate from the `keyboard` package so Win+ combos are reliable.
+RegisterHotKey is intentionally avoided (message-window setup is fragile under
+pythonw). The LL hook swallows Win+H while enabled; registry best-effort
+disables the OS voice-typing launcher. If we are not ready, we do nothing so
+Windows Voice Typing still works.
 """
 
 from __future__ import annotations
@@ -19,13 +15,14 @@ import logging
 import threading
 from typing import Callable, Optional
 
-log = logging.getLogger("whisper-toggle.tray")  # share tray handlers
+log = logging.getLogger("whisper-toggle.tray")
 
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
+WM_QUIT = 0x0012
 VK_H = 0x48
 VK_LWIN = 0x5B
 VK_RWIN = 0x5C
@@ -49,83 +46,72 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
-LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
-    LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
-)
+LowLevelKeyboardProc = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
-user.SetWindowsHookExW.argtypes = [
-    ctypes.c_int,
-    LowLevelKeyboardProc,
-    wintypes.HINSTANCE,
-    wintypes.DWORD,
-]
+user.SetWindowsHookExW.argtypes = [ctypes.c_int, LowLevelKeyboardProc, wintypes.HINSTANCE, wintypes.DWORD]
 user.SetWindowsHookExW.restype = wintypes.HHOOK
 user.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
 user.CallNextHookEx.restype = LRESULT
 user.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 user.UnhookWindowsHookEx.restype = wintypes.BOOL
 user.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
-user.GetMessageW.restype = wintypes.BOOL
+user.GetMessageW.restype = ctypes.c_int
 user.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
 user.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
 user.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user.PostThreadMessageW.restype = wintypes.BOOL
 user.GetAsyncKeyState.argtypes = [ctypes.c_int]
 user.GetAsyncKeyState.restype = wintypes.SHORT
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
-WM_QUIT = 0x0012
 
-
-def _voice_typing_reg_paths():
+def _voice_typing_reg_ops():
     import winreg
 
     return [
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "EnableHwkbTextPrediction"),
-        # Voice typing launcher preference (best-effort; ignored if missing)
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings\VoiceTyping", "EnableLauncher"),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "IsVoiceTypingKeyEnabled", 0),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "VoiceTypingEnabled", 0),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings\VoiceTyping", "EnableLauncher", 0),
     ]
 
 
 class WinHotkeyOwner:
-    """Own Win+H while ready; release cleanly so OS voice typing returns."""
-
     def __init__(self, on_hotkey: Callable[[], None]):
         self.on_hotkey = on_hotkey
-        self._enabled = False  # only swallow when True (engine healthy)
+        self._enabled = False
         self._hook = None
         self._thread: Optional[threading.Thread] = None
         self._tid = 0
-        self._proc = None  # keep callback alive
-        self._win_down = False
-        self._armed = False  # saw win+h down while enabled
+        self._proc = None
         self._saved_reg: list[tuple] = []
         self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._last_fire = 0.0
 
     @property
     def active(self) -> bool:
-        return self._hook is not None and self._enabled
+        return bool(self._enabled and self._hook)
 
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
             return True
+        self._ready.clear()
         self._thread = threading.Thread(target=self._run, name="win-hotkey", daemon=True)
         self._thread.start()
-        # Give the hook a moment to install
-        for _ in range(50):
-            if self._hook is not None:
-                atexit.register(self.stop)
-                return True
-            threading.Event().wait(0.05)
-        log.error("failed to install Win+H hook")
-        return False
+        ok = self._ready.wait(timeout=2.0)
+        if ok:
+            atexit.register(self.stop)
+        else:
+            log.error("Win+H owner thread failed to become ready")
+        return ok
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable swallowing only when Whisper Toggle can actually dictate."""
         with self._lock:
             was = self._enabled
             self._enabled = bool(enabled)
             if self._enabled and not was:
                 self._disable_os_voice_typing()
-                log.info("Win+H ownership ENABLED (OS voice typing suppressed while we are ready)")
+                log.info("Win+H ownership ENABLED (OS voice typing suppressed while ready)")
             elif not self._enabled and was:
                 self._restore_os_voice_typing()
                 log.info("Win+H ownership DISABLED (OS voice typing restored)")
@@ -144,71 +130,75 @@ class WinHotkeyOwner:
                 pass
             self._hook = None
 
+    def _fire(self) -> None:
+        import time
+
+        now = time.monotonic()
+        if now - self._last_fire < 0.35:
+            return  # debounce key repeat
+        self._last_fire = now
+        try:
+            threading.Thread(target=self.on_hotkey, daemon=True).start()
+        except Exception as exc:  # noqa: BLE001
+            log.error("hotkey callback failed: %s", exc)
+
     def _run(self) -> None:
-        self._tid = kernel32.GetCurrentThreadId()
-        self._proc = LowLevelKeyboardProc(self._callback)
-        self._hook = user.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
-        if not self._hook:
-            log.error("SetWindowsHookExW failed: %s", ctypes.get_last_error())
-            return
-        log.info("Win+H low-level hook installed")
-        msg = wintypes.MSG()
-        while user.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-            user.TranslateMessage(ctypes.byref(msg))
-            user.DispatchMessageW(ctypes.byref(msg))
-        if self._hook:
-            user.UnhookWindowsHookEx(self._hook)
-            self._hook = None
+        try:
+            self._tid = kernel32.GetCurrentThreadId()
+            self._proc = LowLevelKeyboardProc(self._callback)
+            self._hook = user.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
+            if not self._hook:
+                log.error("SetWindowsHookExW failed: %s", ctypes.get_last_error())
+                self._ready.set()
+                return
+            log.info("Win+H low-level hook installed")
+            self._ready.set()
+
+            msg = wintypes.MSG()
+            while True:
+                r = user.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if r == 0 or r == -1:
+                    break
+                user.TranslateMessage(ctypes.byref(msg))
+                user.DispatchMessageW(ctypes.byref(msg))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Win+H owner thread crashed: %s", exc)
+            self._ready.set()
+        finally:
+            if self._hook:
+                try:
+                    user.UnhookWindowsHookEx(self._hook)
+                except Exception:
+                    pass
+                self._hook = None
 
     def _callback(self, nCode, wParam, lParam):
         try:
-            if nCode == HC_ACTION:
+            if nCode == HC_ACTION and self._enabled:
                 kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if kb.flags & LLKHF_INJECTED:
-                    return user.CallNextHookEx(self._hook, nCode, wParam, lParam)
-
-                vk = kb.vkCode
-                down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
-                up = wParam in (WM_KEYUP, WM_SYSKEYUP)
-
-                if vk in (VK_LWIN, VK_RWIN):
-                    self._win_down = down
-                    # never swallow bare Win
-                    return user.CallNextHookEx(self._hook, nCode, wParam, lParam)
-
-                # Detect Win held via async state too (more reliable than tracking)
-                win_held = (
-                    self._win_down
-                    or (user.GetAsyncKeyState(VK_LWIN) & 0x8000)
-                    or (user.GetAsyncKeyState(VK_RWIN) & 0x8000)
-                )
-
-                if vk == VK_H and win_held:
-                    if not self._enabled:
-                        # Not ready — let Windows Voice Typing handle it
-                        return user.CallNextHookEx(self._hook, nCode, wParam, lParam)
-                    # Swallow both down and up so OS never sees the chord
-                    if down:
-                        self._armed = True
-                        try:
-                            threading.Thread(target=self.on_hotkey, daemon=True).start()
-                        except Exception as exc:  # noqa: BLE001
-                            log.error("hotkey callback failed: %s", exc)
-                    if up:
-                        self._armed = False
-                    return 1  # non-zero = eat the event
+                if not (kb.flags & LLKHF_INJECTED):
+                    vk = int(kb.vkCode)
+                    down = int(wParam) in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                    win_held = bool(
+                        (user.GetAsyncKeyState(VK_LWIN) & 0x8000)
+                        or (user.GetAsyncKeyState(VK_RWIN) & 0x8000)
+                    )
+                    if vk == VK_H and win_held:
+                        if down:
+                            log.info("Win+H swallowed by LL hook")
+                            self._fire()
+                        return LRESULT(1)
         except Exception as exc:  # noqa: BLE001
             log.error("hook callback error: %s", exc)
         return user.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
     def _disable_os_voice_typing(self) -> None:
-        """Best-effort: turn off launcher while we own Win+H; remember prior values."""
         try:
             import winreg
         except ImportError:
             return
         self._saved_reg = []
-        for root, path, name in _voice_typing_reg_paths():
+        for root, path, name, value in _voice_typing_reg_ops():
             try:
                 key = winreg.CreateKeyEx(root, path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
             except OSError:
@@ -219,7 +209,7 @@ class WinHotkeyOwner:
                 except OSError:
                     prev, typ = None, winreg.REG_DWORD
                 self._saved_reg.append((root, path, name, prev, typ))
-                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 0)
+                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
             except OSError as exc:
                 log.debug("reg set failed %s\\%s: %s", path, name, exc)
             finally:
@@ -237,7 +227,7 @@ class WinHotkeyOwner:
                     try:
                         winreg.DeleteValue(key, name)
                     except OSError:
-                        winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 1)
+                        pass
                 else:
                     winreg.SetValueEx(key, name, 0, typ, prev)
                 winreg.CloseKey(key)

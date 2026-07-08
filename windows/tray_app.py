@@ -70,6 +70,9 @@ class TrayApp:
         self._partial_timer: threading.Timer | None = None
         self._partial_lock = threading.Lock()
         self._owns_api = False
+        self._reload_path = app_data_dir() / "reload.signal"
+        self._config_mtime = 0.0
+        self._poll_stop = threading.Event()
 
         icon_path = app_data_dir() / "assets" / "icon.ico"
         try:
@@ -441,21 +444,32 @@ class TrayApp:
 
     # ── Menu actions ────────────────────────────────────────────────────
     def _on_settings(self, icon=None, item=None):
-        def run():
-            try:
-                from settings_gui import open_settings
-            except ImportError:
-                from windows.settings_gui import open_settings  # type: ignore
+        """Launch settings as a separate process — Tk is not thread-safe."""
+        try:
+            from whisper_toggle.config import default_config_path
 
-            open_settings(
-                self.cfg,
-                self.api.runtime(),
-                on_save=self._apply_config,
-                on_restart_api=lambda: threading.Thread(target=self._restart_api, daemon=True).start(),
-                on_open_logs=self._on_open_logs,
+            config_path = default_config_path()
+            settings_py = APP_DIR / "settings_gui.py"
+            if not settings_py.exists():
+                # installed layout
+                settings_py = Path(os.environ.get("LOCALAPPDATA", "")) / "Whisper Toggle" / "settings_gui.py"
+            creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            # Use console-less pythonw so no flash; settings still gets its own UI thread.
+            py = sys.executable
+            if py.lower().endswith("python.exe"):
+                pyw = py[:-10] + "pythonw.exe"
+                if Path(pyw).exists():
+                    py = pyw
+            subprocess.Popen(
+                [py, str(settings_py), "--config", str(config_path)],
+                cwd=str(APP_DIR if (APP_DIR / "settings_gui.py").exists() else config_path.parent),
+                creationflags=creation,
             )
-
-        threading.Thread(target=run, daemon=True).start()
+            log.info("opened settings process: %s", settings_py)
+            self._notify("Settings opened")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("settings launch failed")
+            self._notify(f"Settings failed: {exc}")
 
     def _apply_config(self, cfg: AppConfig) -> None:
         self.cfg = cfg
@@ -486,6 +500,7 @@ class TrayApp:
             webbrowser.open(path.as_uri())
 
     def _on_quit(self, icon=None, item=None):
+        self._poll_stop.set()
         try:
             if self._recording and self.mic:
                 self.mic.stop()
@@ -513,6 +528,31 @@ class TrayApp:
                 pass
         log.info("notify: %s", msg)
 
+    def _poll_config_reload(self) -> None:
+        """Pick up settings saved by the settings process."""
+        while not self._poll_stop.wait(1.0):
+            try:
+                cfg_path = app_data_dir() / "config.json"
+                if not cfg_path.exists():
+                    continue
+                mtime = cfg_path.stat().st_mtime
+                signal = self._reload_path.exists()
+                if signal or mtime > self._config_mtime > 0:
+                    if signal:
+                        try:
+                            self._reload_path.unlink()
+                        except OSError:
+                            pass
+                    new_cfg = load_config(cfg_path)
+                    self._config_mtime = mtime
+                    log.info("reloading config from disk: hotkey=%s", new_cfg.hotkey)
+                    self._apply_config(new_cfg)
+                    self._notify(f"Settings applied - hotkey {new_cfg.hotkey}")
+                elif self._config_mtime <= 0:
+                    self._config_mtime = mtime
+            except Exception as exc:  # noqa: BLE001
+                log.debug("config poll: %s", exc)
+
     def _startup(self, icon):
         # Ensure icon is visible ASAP
         try:
@@ -522,12 +562,20 @@ class TrayApp:
             pass
         ok = self.start_api()
         self._bind_hotkey()
+        # Always also bind a reliable backup hotkey so user is never stuck
+        try:
+            if (self.cfg.hotkey or "").lower() != "ctrl+shift+h":
+                self.kb.add_hotkey("ctrl+shift+h", self.toggle, suppress=True)
+                log.info("backup hotkey bound: ctrl+shift+h")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("backup hotkey failed: %s", exc)
+        threading.Thread(target=self._poll_config_reload, daemon=True).start()
         if ok:
             self._notify(
-                f"Running. Look for green mic in system tray (click ^ if hidden). Press {self.cfg.hotkey} to dictate."
+                f"Running. Press {self.cfg.hotkey} (backup: Ctrl+Shift+H). Green mic in tray."
             )
         else:
-            self._notify("Engine failed to start — check logs. Win+H left for Windows.")
+            self._notify("Engine failed to start - check logs. Win+H left for Windows.")
             self._set_hotkey_ownership(False)
 
     def run(self) -> None:
