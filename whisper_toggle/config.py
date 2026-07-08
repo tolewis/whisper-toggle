@@ -9,7 +9,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 
-DEFAULT_HOTKEY = "win+h"
+# Ctrl+Shift+H is the reliable default on Windows 11 (Win+H is owned by OS voice typing).
+DEFAULT_HOTKEY = "ctrl+shift+h"
 CONFIG_VERSION = "2.0.0"
 
 
