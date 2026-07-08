@@ -63,6 +63,18 @@ OPENAI_MODEL_ALIASES = {
 APP_VERSION = env("WHISPER_API_VERSION", "2.0.0")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
+
+@app.on_event("startup")
+def _preload_model_if_requested():
+    """Optional warm-load so first dictation is not a cold start."""
+    if env("WHISPER_API_PRELOAD", "0").strip() not in ("1", "true", "yes", "on"):
+        return
+    try:
+        get_model(DEFAULT_MODEL, DEFAULT_DEVICE, DEFAULT_COMPUTE)
+    except Exception:
+        # Leave engine up; first request will surface the error.
+        pass
+
 # Simple in-process cache so repeated calls don't reload weights.
 _model_cache: dict[tuple[str, str, str], WhisperModel] = {}
 

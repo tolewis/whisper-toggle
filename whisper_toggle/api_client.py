@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from typing import Callable, Optional
 
@@ -14,6 +15,8 @@ try:
 except ImportError:  # pragma: no cover
     websockets = None  # type: ignore
 
+log = logging.getLogger("whisper-toggle.api")
+
 
 class LocalApiClient:
     def __init__(
@@ -22,7 +25,7 @@ class LocalApiClient:
         stream_url: str = "ws://127.0.0.1:8788/v1/audio/stream",
         model: str = "small.en",
         language: str = "en",
-        open_timeout: float = 1.0,
+        open_timeout: float = 5.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.stream_url = stream_url
@@ -52,7 +55,7 @@ class LocalApiClient:
             f"{self.base_url}/v1/audio/transcriptions",
             files={"file": ("audio.wav", pcm_wav_bytes, "audio/wav")},
             data={"model": self.model, "language": self.language},
-            timeout=60,
+            timeout=120,
         )
         r.raise_for_status()
         return (r.json().get("text") or "").strip()
@@ -72,7 +75,14 @@ class LocalApiClient:
             url = self.stream_url
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}model={self.model}&language={self.language}"
-            async with websockets.connect(url, open_timeout=self.open_timeout) as ws:
+            async with websockets.connect(
+                url,
+                open_timeout=self.open_timeout,
+                close_timeout=5,
+                ping_interval=20,
+                ping_timeout=20,
+                max_size=8 * 1024 * 1024,
+            ) as ws:
                 chunk = 8192
                 for i in range(0, len(pcm), chunk):
                     await ws.send(pcm[i : i + chunk])
@@ -99,10 +109,7 @@ class LocalApiClient:
 
 
 class LiveStreamSession:
-    """Open a streaming WS and push PCM while the user is speaking.
-
-    Uses an asyncio.Queue so the event loop is never blocked by thread waits.
-    """
+    """Open a streaming WS and push PCM while the user is speaking."""
 
     def __init__(
         self,
@@ -113,7 +120,7 @@ class LiveStreamSession:
         on_confirmed: Callable[[str], None],
         on_final: Callable[[str], None],
         on_error: Optional[Callable[[str], None]] = None,
-        open_timeout: float = 1.0,
+        open_timeout: float = 5.0,
     ):
         if websockets is None:
             raise RuntimeError("websockets package required for streaming")
@@ -130,33 +137,51 @@ class LiveStreamSession:
         self._queue: Optional[asyncio.Queue] = None
         self._ready = threading.Event()
         self._done = threading.Event()
+        self._failed = False
+        self._final_text = ""
+
+    @property
+    def failed(self) -> bool:
+        return self._failed
+
+    @property
+    def final_text(self) -> str:
+        return self._final_text
 
     def start(self) -> bool:
         self._thread = threading.Thread(target=self._thread_main, daemon=True)
         self._thread.start()
-        ok = self._ready.wait(timeout=self.open_timeout + 2)
-        return ok and not self._done.is_set()
+        ok = self._ready.wait(timeout=self.open_timeout + 3)
+        return bool(ok) and not self._failed and not self._done.is_set()
 
     def send_pcm(self, data: bytes) -> None:
-        if not data or self._loop is None or self._queue is None:
+        if not data or self._failed or self._loop is None or self._queue is None:
             return
         try:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
         except Exception:
             pass
 
-    def end(self) -> None:
+    def end(self) -> str:
+        """Signal end-of-audio; wait for final. Returns final text if any."""
+        if self._failed:
+            self._done.set()
+            return self._final_text
         if self._loop is not None and self._queue is not None:
             try:
                 self._loop.call_soon_threadsafe(self._queue.put_nowait, {"type": "end"})
-            except Exception:
-                pass
-        self._done.wait(timeout=60)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("end queue failed: %s", exc)
+                self._failed = True
+                self._done.set()
+        self._done.wait(timeout=90)
+        return self._final_text
 
     def _thread_main(self) -> None:
         try:
             asyncio.run(self._async_main())
         except Exception as exc:  # noqa: BLE001
+            self._failed = True
             self.on_error(str(exc))
             self._ready.set()
             self._done.set()
@@ -168,7 +193,14 @@ class LiveStreamSession:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}model={self.model}&language={self.language}"
         try:
-            async with websockets.connect(url, open_timeout=self.open_timeout) as ws:
+            async with websockets.connect(
+                url,
+                open_timeout=self.open_timeout,
+                close_timeout=5,
+                ping_interval=20,
+                ping_timeout=20,
+                max_size=8 * 1024 * 1024,
+            ) as ws:
                 self._ready.set()
                 recv_task = asyncio.create_task(self._recv_loop(ws))
                 try:
@@ -177,7 +209,11 @@ class LiveStreamSession:
                         if isinstance(item, dict):
                             await ws.send(json.dumps(item))
                             if item.get("type") == "end":
-                                await recv_task
+                                try:
+                                    await asyncio.wait_for(recv_task, timeout=90)
+                                except asyncio.TimeoutError:
+                                    self._failed = True
+                                    self.on_error("stream final timeout")
                                 self._done.set()
                                 return
                         else:
@@ -185,27 +221,39 @@ class LiveStreamSession:
                 finally:
                     if not recv_task.done():
                         recv_task.cancel()
+                        try:
+                            await recv_task
+                        except Exception:
+                            pass
         except Exception as exc:  # noqa: BLE001
+            self._failed = True
             self.on_error(str(exc))
             self._ready.set()
             self._done.set()
 
     async def _recv_loop(self, ws) -> None:
-        async for message in ws:
-            if isinstance(message, bytes):
-                continue
-            try:
-                payload = json.loads(message)
-            except json.JSONDecodeError:
-                continue
-            kind = payload.get("type")
-            text = (payload.get("text") or "").strip()
-            if kind == "partial":
-                self.on_partial(text)
-            elif kind == "confirmed":
-                self.on_confirmed(text)
-            elif kind == "final":
-                self.on_final(text)
-                return
-            elif kind == "error":
-                self.on_error(payload.get("error") or "stream error")
+        try:
+            async for message in ws:
+                if isinstance(message, bytes):
+                    continue
+                try:
+                    payload = json.loads(message)
+                except json.JSONDecodeError:
+                    continue
+                kind = payload.get("type")
+                text = (payload.get("text") or "").strip()
+                if kind == "partial":
+                    self.on_partial(text)
+                elif kind == "confirmed":
+                    self.on_confirmed(text)
+                elif kind == "final":
+                    self._final_text = text
+                    self.on_final(text)
+                    return
+                elif kind == "error":
+                    self._failed = True
+                    self.on_error(payload.get("error") or "stream error")
+                    return
+        except Exception as exc:  # noqa: BLE001
+            self._failed = True
+            self.on_error(str(exc))
