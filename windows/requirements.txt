@@ -1,9 +1,4 @@
-# API server
-faster-whisper
-fastapi
-uvicorn
-
-# Tray app + dictation
+# Windows tray + dictation runtime
 keyboard
 sounddevice
 soundfile
@@ -12,3 +7,5 @@ requests
 pyperclip
 pystray
 Pillow
+websockets>=15.0
+winotify; platform_system=="Windows"

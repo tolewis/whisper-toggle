@@ -60,7 +60,8 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-app = FastAPI(title="Local Whisper API", version="0.2.0")
+APP_VERSION = env("WHISPER_API_VERSION", "2.0.0")
+app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 # Simple in-process cache so repeated calls don't reload weights.
 _model_cache: dict[tuple[str, str, str], WhisperModel] = {}
@@ -78,6 +79,26 @@ def get_model(model_name: str, device: str, compute_type: str) -> WhisperModel:
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/v1/runtime")
+def runtime():
+    """Report active device/model for tray GUI and install acceptance."""
+    backend = "faster-whisper"
+    if DEFAULT_DEVICE in ("vulkan", "whisper.cpp"):
+        backend = "whisper.cpp"
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "device": DEFAULT_DEVICE,
+        "compute_type": DEFAULT_COMPUTE,
+        "model": DEFAULT_MODEL,
+        "language": DEFAULT_LANG,
+        "backend": backend,
+        "streaming": True,
+        "stream_sample_rate": STREAM_SAMPLE_RATE,
+        "models_cached": [list(k) for k in _model_cache.keys()],
+    }
 
 
 def _truthy(v: Optional[str]) -> bool:
