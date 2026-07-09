@@ -285,6 +285,16 @@ class KeyboardAdapter:
         keyeventf_keyup = 0x0002
         ulong_ptr = wintypes.ULONG_PTR if hasattr(wintypes, "ULONG_PTR") else ctypes.c_size_t
 
+        class MouseInput(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ulong_ptr),
+            ]
+
         class KeyBdInput(ctypes.Structure):
             _fields_ = [
                 ("wVk", wintypes.WORD),
@@ -294,8 +304,15 @@ class KeyboardAdapter:
                 ("dwExtraInfo", ulong_ptr),
             ]
 
+        class HardwareInput(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
         class InputUnion(ctypes.Union):
-            _fields_ = [("ki", KeyBdInput)]
+            _fields_ = [("mi", MouseInput), ("ki", KeyBdInput), ("hi", HardwareInput)]
 
         class Input(ctypes.Structure):
             _anonymous_ = ("i",)
@@ -327,6 +344,16 @@ class KeyboardAdapter:
         keyeventf_unicode = 0x0004
         ulong_ptr = wintypes.ULONG_PTR if hasattr(wintypes, "ULONG_PTR") else ctypes.c_size_t
 
+        class MouseInput(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ulong_ptr),
+            ]
+
         class KeyBdInput(ctypes.Structure):
             _fields_ = [
                 ("wVk", wintypes.WORD),
@@ -336,8 +363,15 @@ class KeyboardAdapter:
                 ("dwExtraInfo", ulong_ptr),
             ]
 
+        class HardwareInput(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
         class InputUnion(ctypes.Union):
-            _fields_ = [("ki", KeyBdInput)]
+            _fields_ = [("mi", MouseInput), ("ki", KeyBdInput), ("hi", HardwareInput)]
 
         class Input(ctypes.Structure):
             _anonymous_ = ("i",)
