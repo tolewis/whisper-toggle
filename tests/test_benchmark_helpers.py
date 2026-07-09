@@ -46,6 +46,33 @@ def test_dictation_wer_treats_common_number_spellings_as_equivalent():
     assert asr_candidates.dictation_wer(expected, actual) == 0
 
 
+def test_sherpa_online_transducer_model_paths_prefer_int8(tmp_path):
+    for name in [
+        "tokens.txt",
+        "encoder-epoch-1.onnx",
+        "encoder-epoch-1.int8.onnx",
+        "decoder-epoch-1.onnx",
+        "joiner-epoch-1.onnx",
+        "joiner-epoch-1.int8.onnx",
+    ]:
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    paths = asr_candidates.sherpa_online_transducer_model_paths(tmp_path)
+
+    assert paths["tokens"].name == "tokens.txt"
+    assert paths["encoder"].name == "encoder-epoch-1.int8.onnx"
+    assert paths["decoder"].name == "decoder-epoch-1.onnx"
+    assert paths["joiner"].name == "joiner-epoch-1.int8.onnx"
+
+
+def test_recognizer_result_text_accepts_string_or_text_object():
+    class Result:
+        text = " hello "
+
+    assert asr_candidates.recognizer_result_text(" hi ") == "hi"
+    assert asr_candidates.recognizer_result_text(Result()) == "hello"
+
+
 def _write_test_wav(path: Path, frames: bytes = b"\x00\x00" * 1600) -> None:
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)

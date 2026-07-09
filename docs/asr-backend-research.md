@@ -171,6 +171,38 @@ per clip:
 
 Noise-stress recommendation: keep `base.en` as the best current default-quality
 candidate. `tiny.en` remains attractive for a low-latency mode but degraded on
-noise. `small.en` again fails to justify its added latency. The next real gate is
-human microphone/noisy/live clips and a true streaming backend candidate
-(`sherpa-onnx`).
+noise. `small.en` again fails to justify its added latency.
+
+## Iteration-5 sherpa-onnx online prototype
+
+Iteration 5 added `--backend sherpa-onnx-online` to
+`scripts/benchmark_asr_candidates.py`. The benchmark now accepts extracted
+sherpa-onnx online transducer model directories and reports:
+
+- `elapsed_sec`: final decode CPU time under fast file replay.
+- `first_partial_sec`: CPU time until first non-empty partial under fast replay.
+- `first_partial_audio_sec`: amount of source audio consumed before that first
+  non-empty partial; this is the better lower bound for live UX.
+
+Jubiku setup used an isolated benchmark venv, not the installed product runtime:
+`C:\src\wt-bench\sherpa-env` with `sherpa-onnx==1.13.4` and `numpy`.
+
+Jubiku artifacts:
+- Model dirs under `C:\src\wt-bench\sherpa-models\`
+- Results: `C:\src\wt-bench\asr-candidates-corpus-sherpa-onnx-online-cpu.json`
+
+Sherpa-ONNX online transducer, CPU provider, 1 thread, 0.32s chunks, 2 measured
+runs per clip:
+
+| Model | Load sec | Corpus median sec | Median RTF | Median first partial audio | Median dictation WER | Max dictation WER | Notes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `streaming-zipformer-en-20M-2023-02-17` | 0.937 | 0.213 | 0.0388 | 1.28s | 0.2308 | 0.5000 | Too inaccurate; drops/misrecognizes initial words. |
+| `streaming-zipformer-en-kroko-2025-08-06` | 3.926 | 0.241 | 0.0449 | 1.60s | 0.0000 | 0.2143 | Accurate on simple/numbers clips; misses technical terms (`CUDA` -> `KUDA`, `git` -> `get`, `int eight` -> `intate`). |
+
+Conclusion: sherpa-onnx is viable as a true-streaming prototype and runs fast on
+CPU, but neither tested model beats Faster-Whisper `base.en` as the default
+quality backend on the current synthetic corpus. The useful finding is the live
+partial behavior: KROKO produces stable partial text after ~1.6s of audio with
+~60ms compute overhead, much better than the current Whisper Streaming final
+path. Next steps are noise/real-mic tests for KROKO, then decide whether to use
+sherpa for overlay-only live partials while keeping Faster-Whisper final paste.

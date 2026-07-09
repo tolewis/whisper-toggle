@@ -57,8 +57,11 @@ Primary metrics:
 
 Use this before changing product architecture. It measures warmed model speed and accuracy directly, one backend/model at a time.
 
+Faster-Whisper example:
+
 ```powershell
 python scripts\benchmark_asr_candidates.py `
+  --backend faster-whisper `
   --manifest C:\Temp\wt-corpus\manifest.json `
   --models tiny.en,base.en,small.en,distil-large-v3 `
   --device cuda `
@@ -66,6 +69,28 @@ python scripts\benchmark_asr_candidates.py `
   --runs 3 `
   --json-out C:\Temp\asr-candidates.json
 ```
+
+Sherpa-ONNX online transducer example. `--models` is one or more extracted
+model directories containing `tokens.txt`, `encoder*.onnx`, `decoder*.onnx`, and
+`joiner*.onnx`; the script prefers `*.int8.onnx` encoder/joiner files when both
+are present.
+
+```powershell
+python scripts\benchmark_asr_candidates.py `
+  --backend sherpa-onnx-online `
+  --manifest C:\Temp\wt-corpus\manifest.json `
+  --models C:\src\models\sherpa-onnx-streaming-zipformer-en-20M-2023-02-17 `
+  --device cpu `
+  --sherpa-num-threads 1 `
+  --runs 3 `
+  --json-out C:\Temp\asr-sherpa-online.json
+```
+
+Sherpa reports `first_partial_sec` (CPU time in fast file replay) and
+`first_partial_audio_sec` (how much source audio had been consumed before the
+first non-empty partial). For live UX, `first_partial_audio_sec` is usually the
+more relevant lower bound. This is still an engine benchmark, not active-desktop
+insertion latency.
 
 Repeat against the noisy manifest when comparing close candidates:
 
