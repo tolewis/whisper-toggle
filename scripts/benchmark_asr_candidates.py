@@ -16,8 +16,8 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import re
 import os
+import re
 import subprocess
 import sys
 import time
@@ -116,11 +116,97 @@ def configure_runtime_for_backend() -> None:
         pass
 
 
+def load_manifest(path: Path) -> list[dict[str, Any]]:
+    """Load a JSON array or JSONL benchmark manifest.
+
+    Each row must contain at least:
+      {"audio": "path.wav", "expected": "transcript"}
+    Optional: `id`.
+    Relative audio paths resolve relative to the manifest file.
+    """
+
+    raw = path.read_text(encoding="utf-8-sig").strip()
+    if not raw:
+        raise ValueError(f"empty manifest: {path}")
+    if raw.startswith("["):
+        rows = json.loads(raw)
+    else:
+        rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    if not isinstance(rows, list):
+        raise ValueError("manifest must be a JSON array or JSONL rows")
+    clips: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise ValueError(f"manifest row {idx} is not an object")
+        audio = Path(str(row.get("audio") or ""))
+        if not audio.is_absolute():
+            audio = path.parent / audio
+        expected = str(row.get("expected") or "")
+        if not audio.exists():
+            raise FileNotFoundError(f"manifest row {idx} audio missing: {audio}")
+        clips.append(
+            {
+                "id": str(row.get("id") or audio.stem or f"clip-{idx}"),
+                "audio": audio,
+                "expected": expected,
+                "audio_sec": wav_duration(audio),
+            }
+        )
+    if not clips:
+        raise ValueError(f"manifest contains no clips: {path}")
+    return clips
+
+
+def single_clip(audio: Path, expected: str) -> list[dict[str, Any]]:
+    if not audio.exists():
+        raise FileNotFoundError(f"audio file not found: {audio}")
+    return [
+        {
+            "id": audio.stem,
+            "audio": audio,
+            "expected": expected,
+            "audio_sec": wav_duration(audio),
+        }
+    ]
+
+
+def run_one_transcription(
+    *,
+    model: Any,
+    clip: dict[str, Any],
+    language: str,
+    beam_size: int,
+    vad_filter: bool,
+    run_index: int,
+    phase: str,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    text = transcribe_faster_whisper(
+        model,
+        clip["audio"],
+        language=language,
+        beam_size=beam_size,
+        vad_filter=vad_filter,
+    )
+    elapsed = time.perf_counter() - started
+    audio_sec = float(clip["audio_sec"])
+    return {
+        "phase": phase,
+        "run_index": run_index,
+        "clip_id": clip["id"],
+        "audio": str(clip["audio"]),
+        "audio_sec": round(audio_sec, 4),
+        "elapsed_sec": round(elapsed, 4),
+        "rtf": round(elapsed / audio_sec, 4),
+        "wer": wer(str(clip["expected"]), text),
+        "text": text,
+    }
+
+
 def benchmark_faster_whisper_model(
     *,
     model_name: str,
-    audio: Path,
-    expected: str,
+    clips: list[dict[str, Any]],
     device: str,
     compute_type: str,
     language: str,
@@ -128,7 +214,6 @@ def benchmark_faster_whisper_model(
     vad_filter: bool,
     runs: int,
     warmup_runs: int,
-    audio_sec: float,
 ) -> dict[str, Any]:
     configure_runtime_for_backend()
     from faster_whisper import WhisperModel
@@ -140,44 +225,34 @@ def benchmark_faster_whisper_model(
     after_load_mem = nvidia_memory_used_mb()
 
     warmups: list[dict[str, Any]] = []
-    for _ in range(warmup_runs):
-        started = time.perf_counter()
-        text = transcribe_faster_whisper(
-            model,
-            audio,
-            language=language,
-            beam_size=beam_size,
-            vad_filter=vad_filter,
-        )
-        elapsed = time.perf_counter() - started
+    first_clip = clips[0]
+    for idx in range(1, warmup_runs + 1):
         warmups.append(
-            {
-                "elapsed_sec": round(elapsed, 4),
-                "rtf": round(elapsed / audio_sec, 4),
-                "wer": wer(expected, text),
-                "text": text,
-            }
+            run_one_transcription(
+                model=model,
+                clip=first_clip,
+                language=language,
+                beam_size=beam_size,
+                vad_filter=vad_filter,
+                run_index=idx,
+                phase="warmup",
+            )
         )
 
     measurements: list[dict[str, Any]] = []
-    for _ in range(runs):
-        started = time.perf_counter()
-        text = transcribe_faster_whisper(
-            model,
-            audio,
-            language=language,
-            beam_size=beam_size,
-            vad_filter=vad_filter,
-        )
-        elapsed = time.perf_counter() - started
-        measurements.append(
-            {
-                "elapsed_sec": round(elapsed, 4),
-                "rtf": round(elapsed / audio_sec, 4),
-                "wer": wer(expected, text),
-                "text": text,
-            }
-        )
+    for run_idx in range(1, runs + 1):
+        for clip in clips:
+            measurements.append(
+                run_one_transcription(
+                    model=model,
+                    clip=clip,
+                    language=language,
+                    beam_size=beam_size,
+                    vad_filter=vad_filter,
+                    run_index=run_idx,
+                    phase="measure",
+                )
+            )
 
     after_runs_mem = nvidia_memory_used_mb()
     del model
@@ -199,6 +274,18 @@ def benchmark_faster_whisper_model(
             "elapsed_sec": summarize([row["elapsed_sec"] for row in measurements]),
             "rtf": summarize([row["rtf"] for row in measurements]),
             "wer": summarize([row["wer"] for row in measurements if row["wer"] is not None]),
+        },
+        "by_clip": {
+            clip["id"]: {
+                "elapsed_sec": summarize(
+                    [row["elapsed_sec"] for row in measurements if row["clip_id"] == clip["id"]]
+                ),
+                "rtf": summarize([row["rtf"] for row in measurements if row["clip_id"] == clip["id"]]),
+                "wer": summarize(
+                    [row["wer"] for row in measurements if row["clip_id"] == clip["id"] and row["wer"] is not None]
+                ),
+            }
+            for clip in clips
         },
         "nvidia_memory_used_mb": {
             "before_load": before_mem,
@@ -225,8 +312,10 @@ def benchmark_model_safe(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark ASR candidate models")
-    parser.add_argument("--audio", required=True, type=Path)
-    parser.add_argument("--expected", default="")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--audio", type=Path)
+    source.add_argument("--manifest", type=Path, help="JSON array or JSONL rows: audio, expected, optional id")
+    parser.add_argument("--expected", default="", help="expected transcript for --audio mode")
     parser.add_argument(
         "--models",
         required=True,
@@ -242,28 +331,36 @@ def main() -> int:
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args()
 
-    if not args.audio.exists():
-        raise SystemExit(f"audio file not found: {args.audio}")
+    clips = load_manifest(args.manifest) if args.manifest else single_clip(args.audio, args.expected)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if not models:
         raise SystemExit("--models did not contain any model names")
 
-    audio_sec = wav_duration(args.audio)
     result = {
         "schema": "teamlewis/whisper-toggle-asr-benchmark@1",
-        "audio": str(args.audio),
-        "audio_sec": round(audio_sec, 4),
-        "expected": args.expected,
+        "clips": [
+            {
+                "id": clip["id"],
+                "audio": str(clip["audio"]),
+                "audio_sec": round(float(clip["audio_sec"]), 4),
+                "expected": clip["expected"],
+            }
+            for clip in clips
+        ],
         "models": [],
     }
+    if len(clips) == 1:
+        # Back-compatible convenience fields for older one-clip reports.
+        result["audio"] = result["clips"][0]["audio"]
+        result["audio_sec"] = result["clips"][0]["audio_sec"]
+        result["expected"] = result["clips"][0]["expected"]
 
     for model_name in models:
         result["models"].append(
             benchmark_model_safe(
                 {
                     "model_name": model_name,
-                    "audio": args.audio,
-                    "expected": args.expected,
+                    "clips": clips,
                     "device": args.device,
                     "compute_type": args.compute_type,
                     "language": args.language,
@@ -271,7 +368,6 @@ def main() -> int:
                     "vad_filter": args.vad_filter,
                     "runs": args.runs,
                     "warmup_runs": args.warmup_runs,
-                    "audio_sec": audio_sec,
                 }
             )
         )

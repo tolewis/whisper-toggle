@@ -14,6 +14,13 @@ powershell -ExecutionPolicy Bypass -File windows\make-benchmark-audio.ps1 `
   -Out C:\Temp\wt-benchmark.wav
 ```
 
+For model selection, prefer a small corpus over one phrase:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\make-benchmark-corpus.ps1 `
+  -OutDir C:\Temp\wt-corpus
+```
+
 Then run the API benchmark against a running tray/API:
 
 ```powershell
@@ -39,8 +46,7 @@ Use this before changing product architecture. It measures warmed model speed an
 
 ```powershell
 python scripts\benchmark_asr_candidates.py `
-  --audio C:\Temp\wt-benchmark.wav `
-  --expected "Whisper Toggle benchmark phrase. The quick brown fox dictates into the focused window." `
+  --manifest C:\Temp\wt-corpus\manifest.json `
   --models tiny.en,base.en,small.en,distil-large-v3 `
   --device cuda `
   --compute-type int8 `

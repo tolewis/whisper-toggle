@@ -68,12 +68,18 @@ Selection metrics:
 
 ## Benchmark commands
 
+Build a repeatable local SAPI corpus:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\make-benchmark-corpus.ps1 `
+  -OutDir C:\src\wt-bench\corpus
+```
+
 Direct model benchmark for Faster-Whisper candidates:
 
 ```powershell
 python scripts\benchmark_asr_candidates.py `
-  --audio C:\src\wt-bench\wt-benchmark.wav `
-  --expected "Whisper Toggle benchmark phrase. The quick brown fox dictates into the focused window." `
+  --manifest C:\src\wt-bench\corpus\manifest.json `
   --models tiny.en,base.en,small.en,distil-large-v3 `
   --device cuda `
   --compute-type int8 `
@@ -97,3 +103,33 @@ The fastest near-term path is:
 3. Keep final paste as the reliable default, but improve live overlay/partial
    latency; only consider focused live text mutation after the ASR backend and
    foreground authority are proven.
+
+## Iteration-2 baseline results
+
+On jubiku with cached Faster-Whisper models, CUDA/int8, beam size 1, single fixed
+6.458s SAPI clip:
+
+| Model | Load sec | Warm median sec | RTF median | WER |
+|---|---:|---:|---:|---:|
+| `tiny.en` | 0.880 | 0.143 | 0.022 | 0.0 |
+| `base.en` | 0.583 | 0.190 | 0.029 | 0.0 |
+| `small.en` | 1.393 | 0.311 | 0.048 | 0.0 |
+
+For this simple phrase, `tiny.en` is fastest and accurate. That is **not enough**
+to make it the default: we need a harder corpus and live/noisy microphone clips.
+Iteration 2 added `windows/make-benchmark-corpus.ps1` and `--manifest` support
+so selection can use multiple clips while loading each model only once.
+
+Synthetic 5-clip corpus results on jubiku (`tiny.en`, `base.en`, `small.en`,
+CUDA/int8, beam size 1, 2 measured runs per clip):
+
+| Model | Load sec | Corpus median sec | Corpus median RTF | Corpus median WER | Max WER | Note |
+|---|---:|---:|---:|---:|---:|---|
+| `tiny.en` | 0.890 | 0.130 | 0.024 | 0.100 | 0.250 | Fastest; mishears `git` as `get`; numbers normalized differently. |
+| `base.en` | 0.566 | 0.173 | 0.032 | 0.000 | 0.3125 | Best speed/accuracy tradeoff on synthetic corpus. |
+| `small.en` | 1.498 | 0.313 | 0.058 | 0.000 | 0.375 | Slower, no synthetic accuracy win over `base.en`. |
+
+Caveat: current WER penalizes spoken numbers vs digits (`ninth` vs `9`,
+`fifteen` vs `15`) even though those are acceptable dictation outputs. Next
+benchmark iteration should add a normalization layer for numbers/punctuation and
+include real microphone clips.
