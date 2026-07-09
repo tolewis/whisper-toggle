@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import atexit
 import os
 import subprocess
 import sys
@@ -34,7 +35,9 @@ from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
 from whisper_toggle.status_messages import startup_loading_notice
+from whisper_toggle.win_engine import already_running, plan_engine_start, register_cleanup_if_owned
 from whisper_toggle.win_input import KeyboardAdapter, MicRecorder
+from whisper_toggle.win_policy import should_own_hotkey
 
 log = setup_logging("whisper-toggle.tray")
 
@@ -42,6 +45,9 @@ API_HOST = "127.0.0.1"
 API_PORT = 8788
 API_BASE = f"http://{API_HOST}:{API_PORT}"
 STREAM_URL = f"ws://{API_HOST}:{API_PORT}/v1/audio/stream"
+
+# Keeps the single-instance named mutex handle alive for the process lifetime.
+_SINGLE_INSTANCE_MUTEX = None
 
 
 class TrayApp:
@@ -78,6 +84,7 @@ class TrayApp:
         self._preview_batch_lock = threading.Lock()
         self._preview_confirmed = ""
         self._owns_api = False
+        self._cleanup_registered = False
         self._reload_path = app_data_dir() / "reload.signal"
         self._quit_path = app_data_dir() / "quit.signal"
         self._config_mtime = 0.0
@@ -102,8 +109,10 @@ class TrayApp:
                 self.tray.visible = True
             except Exception as exc:  # noqa: BLE001
                 log.debug("tray update failed: %s", exc)
-        # Hotkey ownership follows readiness
-        ready = state == State.IDLE and self.api.is_healthy()
+        # Hotkey ownership follows readiness. Crucially it stays OWNED through
+        # RECORDING and PROCESSING (not just IDLE) so the 2nd Win+H press is
+        # still intercepted to STOP instead of opening OS Voice Typing.
+        ready = should_own_hotkey(state, self.api.is_healthy())
         self._set_hotkey_ownership(ready)
 
     def _menu(self):
@@ -126,7 +135,11 @@ class TrayApp:
 
     # ── Engine ──────────────────────────────────────────────────────────
     def start_api(self) -> bool:
-        if self.api.is_healthy():
+        plan = plan_engine_start(self.api.is_healthy())
+        if not plan.should_spawn:
+            # Adopt an already-healthy engine: we did NOT spawn it, so we must
+            # not own it or register a killer for it (it may be another instance).
+            self._owns_api = False
             self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
             return True
 
@@ -187,6 +200,11 @@ class TrayApp:
                 creationflags=creation,
             )
             self._owns_api = True
+            # We spawned it, so we own it: register a cleanup so an abrupt tray
+            # exit stops the child instead of orphaning uvicorn on :8788.
+            if not self._cleanup_registered:
+                register_cleanup_if_owned(self._owns_api, atexit.register, self.stop_api)
+                self._cleanup_registered = True
         except Exception as exc:  # noqa: BLE001
             self._set_state(State.ERROR, f"Engine failed: {exc}")
             return False
@@ -578,7 +596,7 @@ class TrayApp:
                 self._win_owner = WinHotkeyOwner(on_hotkey=self.toggle)
                 if self._win_owner.start():
                     # Enable only when ready
-                    self._set_hotkey_ownership(self.state == State.IDLE and self.api.is_healthy())
+                    self._set_hotkey_ownership(should_own_hotkey(self.state, self.api.is_healthy()))
                     log.info("Win+H native ownership hook ready")
                     self._ensure_backup_hotkey()
                     return
@@ -781,15 +799,22 @@ def main():
     if sys.platform.startswith("win"):
         try:
             import ctypes
+            from ctypes import wintypes
 
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # use_last_error + explicit restype/argtypes so get_last_error() is
+            # read from this exact call and is not clobbered by intervening
+            # ctypes bookkeeping (the old windll/GetLastError probe was fragile).
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+            kernel32.CreateMutexW.restype = wintypes.HANDLE
             handle = kernel32.CreateMutexW(None, False, "Local\\WhisperToggleV2")
-            last = kernel32.GetLastError()
-            if last == 183:
+            last = ctypes.get_last_error()
+            if already_running(last):
                 log.warning("another instance is running")
-                # Still try to toast via a short-lived message? just exit.
                 return
-            _ = handle
+            # Hold the handle for the whole process so the mutex stays owned.
+            global _SINGLE_INSTANCE_MUTEX
+            _SINGLE_INSTANCE_MUTEX = handle
         except Exception:
             pass
 

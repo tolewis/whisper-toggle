@@ -107,8 +107,13 @@ begin
 end;
 
 [UninstallRun]
-Filename: "taskkill.exe"; \
-    Parameters: "/F /IM pythonw.exe"; \
+; Stop ONLY the python(w) processes that are running from THIS install dir
+; ({app}), matched by their real ExecutablePath. Never an image-wide taskkill
+; by image name -- that would kill every unrelated python/pythonw on the box.
+; NB: literal PowerShell "{" is escaped as "{{" for Inno; "{app}" stays a
+; single-brace Inno constant so it expands to the install path.
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and $_.ExecutablePath -like '{app}\*' } | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } """; \
     Flags: runhidden; \
     RunOnceId: "KillWhisperToggle"
 
