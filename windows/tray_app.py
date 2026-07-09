@@ -34,6 +34,7 @@ from whisper_toggle.icons import tray_icon, write_app_icon
 from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
+from whisper_toggle import sounds
 from whisper_toggle.status_messages import startup_loading_notice
 from whisper_toggle.win_engine import already_running, plan_engine_start, register_cleanup_if_owned
 from whisper_toggle.win_input import KeyboardAdapter, MicRecorder
@@ -264,6 +265,7 @@ class TrayApp:
                     pass
 
     def _start_recording(self) -> None:
+        sounds.play_start()  # audible "recording started" cue
         self.session.clear()
         self._pcm_buffer = bytearray()
         self._preview_confirmed = ""
@@ -328,6 +330,7 @@ class TrayApp:
         log.info("live stream connected")
 
     def _stop_recording(self) -> None:
+        sounds.play_stop()  # audible "recording stopped" cue on the second press
         self._recording = False
         catchup = max(0, int(self.cfg.hardware_catchup_ms)) / 1000.0
         if catchup:
