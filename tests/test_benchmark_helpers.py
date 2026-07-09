@@ -37,6 +37,14 @@ def test_asr_candidate_helpers_match_basic_wer_and_summary_contract():
     assert asr_candidates.summarize([0.3, 0.1]) == {"min": 0.1, "median": 0.2, "max": 0.3}
 
 
+def test_dictation_wer_treats_common_number_spellings_as_equivalent():
+    expected = "July ninth at ten thirty AM and remind me in fifteen minutes"
+    actual = "July 9 at 10 30 a.m and remind me in 15 minutes"
+
+    assert asr_candidates.wer(expected, actual) > 0
+    assert asr_candidates.dictation_wer(expected, actual) == 0
+
+
 def test_asr_manifest_loads_json_array_and_relative_audio(tmp_path):
     wav_path = tmp_path / "clip.wav"
     with wave.open(str(wav_path), "wb") as wav:

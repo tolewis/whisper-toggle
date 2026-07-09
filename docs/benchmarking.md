@@ -38,7 +38,8 @@ Primary metrics:
 - `batch.elapsed_sec`: latency after the user stops speaking.
 - `stream.first_partial_sec`: first live partial latency.
 - `stream.final_sec`: stream final latency.
-- `wer`: word error rate against the expected phrase.
+- `wer`: strict word error rate against the expected phrase.
+- `dictation_wer` in candidate-model reports: WER after conservative dictation normalization for common number formats (`ninth` vs `9`, `fifteen` vs `15`).
 
 ## 2. Direct candidate-model benchmark
 

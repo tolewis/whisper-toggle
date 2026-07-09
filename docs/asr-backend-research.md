@@ -129,7 +129,23 @@ CUDA/int8, beam size 1, 2 measured runs per clip):
 | `base.en` | 0.566 | 0.173 | 0.032 | 0.000 | 0.3125 | Best speed/accuracy tradeoff on synthetic corpus. |
 | `small.en` | 1.498 | 0.313 | 0.058 | 0.000 | 0.375 | Slower, no synthetic accuracy win over `base.en`. |
 
-Caveat: current WER penalizes spoken numbers vs digits (`ninth` vs `9`,
-`fifteen` vs `15`) even though those are acceptable dictation outputs. Next
-benchmark iteration should add a normalization layer for numbers/punctuation and
-include real microphone clips.
+## Iteration-3 dictation-normalized WER
+
+Iteration 3 added `dictation_wer` to treat common dictation-equivalent number
+forms as equal (`ninth` -> `9`, `fifteen` -> `15`, `10.30am` -> `10 30 am`).
+This avoids rejecting useful outputs just because the ASR formats spoken numbers
+like Windows Voice Typing does.
+
+Rerun on the same 5-clip corpus (`C:\src\wt-bench\asr-candidates-corpus-fw-cuda-int8-dictation-wer.json`):
+
+| Model | Corpus median sec | Corpus median RTF | Median dictation WER | Max dictation WER | Remaining error pattern |
+|---|---:|---:|---:|---:|---|
+| `tiny.en` | 0.128 | 0.0235 | 0.000 | 0.100 | `git status` -> `get status`; `int` -> `in`. |
+| `base.en` | 0.173 | 0.0321 | 0.000 | 0.1429 | `int eight compute` -> `intate compute`. |
+| `small.en` | 0.313 | 0.0581 | 0.000 | 0.1429 | same `intate compute`; slower. |
+
+Current synthetic-corpus recommendation: `tiny.en` is now the leading low-latency
+candidate if we can tolerate occasional technical-term confusions. `base.en` is
+the safer default for technical dictation. `small.en` is not justified by these
+synthetic clips. The next real gate is microphone/noisy/live clips and a true
+streaming backend candidate (`sherpa-onnx`).

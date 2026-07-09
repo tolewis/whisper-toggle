@@ -27,10 +27,89 @@ from typing import Any
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
+_DICTATION_TOKEN_RE = re.compile(r"[a-z]+|\d+", re.IGNORECASE)
+_NUMBER_WORDS = {
+    "zero": "0",
+    "oh": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "eleven": "11",
+    "twelve": "12",
+    "thirteen": "13",
+    "fourteen": "14",
+    "fifteen": "15",
+    "sixteen": "16",
+    "seventeen": "17",
+    "eighteen": "18",
+    "nineteen": "19",
+    "twenty": "20",
+    "thirty": "30",
+    "forty": "40",
+    "fifty": "50",
+    "sixty": "60",
+    "seventy": "70",
+    "eighty": "80",
+    "ninety": "90",
+    "first": "1",
+    "second": "2",
+    "third": "3",
+    "fourth": "4",
+    "fifth": "5",
+    "sixth": "6",
+    "seventh": "7",
+    "eighth": "8",
+    "ninth": "9",
+    "tenth": "10",
+    "eleventh": "11",
+    "twelfth": "12",
+    "thirteenth": "13",
+    "fourteenth": "14",
+    "fifteenth": "15",
+    "sixteenth": "16",
+    "seventeenth": "17",
+    "eighteenth": "18",
+    "nineteenth": "19",
+    "twentieth": "20",
+}
 
 
 def normalize_words(text: str) -> list[str]:
     return _WORD_RE.findall((text or "").lower())
+
+
+def normalize_dictation_words(text: str) -> list[str]:
+    """Normalize common dictation-equivalent tokens for fairer WER.
+
+    ASR often writes spoken numbers as digits ("fifteen" -> "15") and times as
+    `10.30am`. These are acceptable dictation outputs but basic WER counts them
+    as errors. Keep this conservative: only normalize common one-token numbers
+    and split digit/letter runs.
+    """
+
+    raw = _DICTATION_TOKEN_RE.findall((text or "").lower())
+    mapped = [_NUMBER_WORDS.get(token, token) for token in raw]
+    out: list[str] = []
+    i = 0
+    while i < len(mapped):
+        if mapped[i : i + 2] == ["a", "m"]:
+            out.append("am")
+            i += 2
+            continue
+        if mapped[i : i + 2] == ["p", "m"]:
+            out.append("pm")
+            i += 2
+            continue
+        out.append(mapped[i])
+        i += 1
+    return out
 
 
 def edit_distance(a: list[str], b: list[str]) -> int:
@@ -48,6 +127,13 @@ def wer(expected: str, actual: str) -> float | None:
     if not ref:
         return None
     return edit_distance(ref, normalize_words(actual)) / len(ref)
+
+
+def dictation_wer(expected: str, actual: str) -> float | None:
+    ref = normalize_dictation_words(expected)
+    if not ref:
+        return None
+    return edit_distance(ref, normalize_dictation_words(actual)) / len(ref)
 
 
 def wav_duration(path: Path) -> float:
@@ -199,6 +285,7 @@ def run_one_transcription(
         "elapsed_sec": round(elapsed, 4),
         "rtf": round(elapsed / audio_sec, 4),
         "wer": wer(str(clip["expected"]), text),
+        "dictation_wer": dictation_wer(str(clip["expected"]), text),
         "text": text,
     }
 
@@ -274,6 +361,9 @@ def benchmark_faster_whisper_model(
             "elapsed_sec": summarize([row["elapsed_sec"] for row in measurements]),
             "rtf": summarize([row["rtf"] for row in measurements]),
             "wer": summarize([row["wer"] for row in measurements if row["wer"] is not None]),
+            "dictation_wer": summarize(
+                [row["dictation_wer"] for row in measurements if row["dictation_wer"] is not None]
+            ),
         },
         "by_clip": {
             clip["id"]: {
@@ -283,6 +373,13 @@ def benchmark_faster_whisper_model(
                 "rtf": summarize([row["rtf"] for row in measurements if row["clip_id"] == clip["id"]]),
                 "wer": summarize(
                     [row["wer"] for row in measurements if row["clip_id"] == clip["id"] and row["wer"] is not None]
+                ),
+                "dictation_wer": summarize(
+                    [
+                        row["dictation_wer"]
+                        for row in measurements
+                        if row["clip_id"] == clip["id"] and row["dictation_wer"] is not None
+                    ]
                 ),
             }
             for clip in clips
