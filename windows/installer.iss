@@ -1,20 +1,20 @@
-; installer.iss - Inno Setup script for Whisper Toggle v2.0.1
+; installer.iss - Inno Setup script for Whisper Toggle v2.0.2
 ;
 ; Build:
 ;   1. powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-;   2. ISCC compiles this into WhisperToggle-Setup-2.0.1.exe
+;   2. ISCC compiles this into WhisperToggle-Setup-2.0.2.exe
 
 [Setup]
 AppId={{A7D3F2E1-B8C4-4F5A-9E6D-1C2B3A4F5E6D}
 AppName=Whisper Toggle
-AppVersion=2.0.1
-AppVerName=Whisper Toggle 2.0.1
+AppVersion=2.0.2
+AppVerName=Whisper Toggle 2.0.2
 AppPublisher=Tim Lewis
 AppPublisherURL=https://github.com/tolewis/Whisper-Toggle
 AppSupportURL=https://github.com/tolewis/Whisper-Toggle/issues
 DefaultDirName={localappdata}\Whisper Toggle
 DefaultGroupName=Whisper Toggle
-OutputBaseFilename=WhisperToggle-Setup-2.0.1
+OutputBaseFilename=WhisperToggle-Setup-2.0.2
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\assets\icon.ico
 Compression=lzma2/ultra64

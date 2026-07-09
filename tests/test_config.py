@@ -16,7 +16,7 @@ def test_default_config_roundtrip(tmp_path: Path):
     assert loaded.device_override == "auto"
     assert loaded.streaming is False
     assert loaded.live_partials is False
-    assert loaded.version == "2.0.1"
+    assert loaded.version == "2.0.2"
 
 
 def test_hotkey_validation():
@@ -30,7 +30,7 @@ def test_hotkey_validation():
         autostart=True,
         partial_debounce_ms=400,
         hardware_catchup_ms=250,
-        version="2.0.1",
+        version="2.0.2",
     )
     assert cfg2.hotkey == "ctrl+shift+h"
 
