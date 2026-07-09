@@ -38,3 +38,18 @@ def test_runtime_reports_device_model_compute(client):
     assert "streaming" in body
     assert body["streaming"] is True
     assert body["version"].startswith("2.")
+
+
+def test_runtime_streaming_defaults_to_true(monkeypatch):
+    # Unset / default -> streaming advertised as enabled.
+    monkeypatch.delenv("WHISPER_API_STREAMING", raising=False)
+    body = TestClient(whisper_app.app).get("/v1/runtime").json()
+    assert body["streaming"] is True
+
+
+def test_runtime_streaming_reflects_env_disabled(monkeypatch):
+    # Operator disabled streaming -> the field must reflect reality, not a
+    # hardcoded literal.
+    monkeypatch.setenv("WHISPER_API_STREAMING", "0")
+    body = TestClient(whisper_app.app).get("/v1/runtime").json()
+    assert body["streaming"] is False
