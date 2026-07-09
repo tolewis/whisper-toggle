@@ -12,9 +12,15 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux desktop tooling (bash/pw-record/arecord)",
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "linux" / "dictate-toggle.sh"

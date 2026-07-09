@@ -8,9 +8,15 @@ is missing.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux desktop tooling (wtype/xdotool)",
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLIENT = REPO_ROOT / "linux" / "stream_ws_client.py"

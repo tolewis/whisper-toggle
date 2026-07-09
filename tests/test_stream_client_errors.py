@@ -17,6 +17,11 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="drives the client as a POSIX subprocess with SIGINT",
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLIENT = REPO_ROOT / "linux" / "stream_ws_client.py"
 
