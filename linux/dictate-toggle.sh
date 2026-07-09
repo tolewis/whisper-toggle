@@ -78,14 +78,19 @@ is_recording() {
 
 paste_text() {
     local wm_class=""
+    local title=""
+    local target=""
     local wid
-    wid=$(xdotool getactivewindow 2>/dev/null) && \
-        wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"')
+    if wid=$(xdotool getactivewindow 2>/dev/null); then
+        wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
+        title=$(xdotool getwindowname "$wid" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+    fi
+    target="$wm_class $title"
 
     sleep 0.05
 
-    case "$wm_class" in
-        *gnome-terminal*|*kitty*|*Alacritty*|*foot*|*xterm*|*Tilix*|*terminator*|*konsole*|*st-256color*|*tmux*)
+    case "$target" in
+        *gnome-terminal*|*kgx*|*kitty*|*alacritty*|*foot*|*xterm*|*tilix*|*terminator*|*konsole*|*wezterm*|*st-256color*|*tmux*)
             xdotool key --clearmodifiers ctrl+shift+v
             ;;
         *)
@@ -317,7 +322,8 @@ stop_streaming() {
         exit 0
     fi
 
-    type_text "$text"
+    printf '%s' "$text" | xclip -selection clipboard
+    paste_text
     local chars=${#text}
     local preview="${text:0:60}"
     [[ ${#text} -gt 60 ]] && preview="${preview}..."

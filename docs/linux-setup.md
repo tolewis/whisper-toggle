@@ -86,7 +86,7 @@ gsettings set "${SCHEMA}:${P1}" binding "<Ctrl>grave"
 2. Speak
 3. Press hotkey again — "Processing..." → transcribed text auto-pasted + clipboard
 
-Terminal windows (gnome-terminal, kitty, Alacritty, etc.) are auto-detected and use Ctrl+Shift+V.
+Final text is copied to the clipboard and pasted at the focused cursor. Terminal windows (GNOME Console/Terminal, kitty, Alacritty, tmux titles, etc.) are auto-detected and use Ctrl+Shift+V; normal apps use Ctrl+V.
 
 ## Troubleshooting
 

@@ -24,23 +24,29 @@ chmod +x "$MOCK_BIN/notify-send"
 
 cat > "$MOCK_BIN/xclip" <<'SH'
 #!/usr/bin/env bash
-cat >/dev/null
+cat >> "$XCLIP_LOG"
+printf '\n' >> "$XCLIP_LOG"
 exit 0
 SH
 chmod +x "$MOCK_BIN/xclip"
 
 cat > "$MOCK_BIN/xprop" <<'SH'
 #!/usr/bin/env bash
-echo 'WM_CLASS(STRING) = "test", "test"'
+echo "WM_CLASS(STRING) = ${MOCK_WM_CLASS:-\"test\", \"test\"}"
 SH
 chmod +x "$MOCK_BIN/xprop"
 
 cat > "$MOCK_BIN/xdotool" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$XDOTOOL_LOG"
-if [[ "${1:-}" == "getactivewindow" ]]; then
-    echo 123
-fi
+case "${1:-}" in
+    getactivewindow)
+        echo 123
+        ;;
+    getwindowname)
+        echo "${MOCK_WINDOW_TITLE:-Test Window}"
+        ;;
+esac
 exit 0
 SH
 chmod +x "$MOCK_BIN/xdotool"
@@ -116,6 +122,7 @@ sleep 0.3
 
 export PATH="$MOCK_BIN:$PATH"
 export XDOTOOL_LOG="$TMP/xdotool.log"
+export XCLIP_LOG="$TMP/xclip.log"
 export WHISPER_WORK_DIR="$TMP/work"
 export WHISPER_STREAMING=1
 export WHISPER_STREAMING_ENDPOINT="ws://127.0.0.1:$PORT"
@@ -127,6 +134,16 @@ export WHISPER_STREAM_CLIENT="$REPO_ROOT/linux/stream_ws_client.py"
 sleep 0.5
 "$REPO_ROOT/linux/dictate-toggle.sh"
 
-grep -q 'type --clearmodifiers --delay 0 hello world' "$XDOTOOL_LOG"
+grep -q '^hello world$' "$XCLIP_LOG"
+grep -q 'key --clearmodifiers ctrl+v' "$XDOTOOL_LOG"
 grep -q '"type": "partial"' "$TMP/osd.log"
 grep -q '"type": "final"' "$TMP/osd.log"
+
+: > "$XDOTOOL_LOG"
+export MOCK_WM_CLASS='"gnome-terminal", "Gnome-terminal"'
+export MOCK_WINDOW_TITLE='tmux on server'
+"$REPO_ROOT/linux/dictate-toggle.sh"
+sleep 0.5
+"$REPO_ROOT/linux/dictate-toggle.sh"
+
+grep -q 'key --clearmodifiers ctrl+shift+v' "$XDOTOOL_LOG"
