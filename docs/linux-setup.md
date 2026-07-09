@@ -5,7 +5,11 @@ Tested on Ubuntu 24.04, GNOME, PipeWire, GTX 1060 6GB.
 ## Prerequisites
 
 - GNOME desktop (Wayland or X11)
-- PipeWire audio (`pw-record` available)
+- PipeWire audio (`pw-record` available) — used for both the streaming and
+  batch recorders, so no ALSA/`arecord` is required. Streaming auto-selects
+  `pw-record`, falling back to `arecord` if present; override with
+  `WHISPER_STREAM_RECORDER`. If no streaming recorder is available the script
+  cleanly falls back to the batch path.
 - NVIDIA GPU with CUDA (or set `WHISPER_API_DEVICE=cpu`)
 - Python 3.9+
 

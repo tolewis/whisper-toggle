@@ -19,6 +19,10 @@ DEFAULT_STREAM_CLIENT="$SCRIPT_DIR/whisper-stream-ws-client.py"
 [[ -x "$DEFAULT_STREAM_CLIENT" ]] || DEFAULT_STREAM_CLIENT="$SCRIPT_DIR/stream_ws_client.py"
 WHISPER_OSD_BIN="${WHISPER_OSD_BIN:-$DEFAULT_OSD_BIN}"
 WHISPER_STREAM_CLIENT="${WHISPER_STREAM_CLIENT:-$DEFAULT_STREAM_CLIENT}"
+# Recorder for the streaming (raw PCM) path. "auto" prefers pw-record so a
+# pipewire-only install works without ALSA; falls back to arecord. Override
+# with a specific binary name (e.g. arecord) if desired.
+WHISPER_STREAM_RECORDER="${WHISPER_STREAM_RECORDER:-auto}"
 
 WORK_DIR="${WHISPER_WORK_DIR:-/tmp/dictate-toggle}"
 PID_FILE="$WORK_DIR/rec.pid"
@@ -281,7 +285,43 @@ stop_osd_if_needed() {
     wait "$osd_pid" 2>/dev/null || true
 }
 
+# Echo the streaming recorder to use, or return nonzero if none is available.
+# "auto" prefers pw-record (pipewire) then arecord (ALSA). A specific override
+# must be present on PATH or resolution fails (so we can fall back to batch).
+resolve_stream_recorder() {
+    if [[ "$WHISPER_STREAM_RECORDER" != "auto" ]]; then
+        command -v "$WHISPER_STREAM_RECORDER" >/dev/null 2>&1 || return 1
+        printf '%s' "$WHISPER_STREAM_RECORDER"
+        return 0
+    fi
+    if command -v pw-record >/dev/null 2>&1; then
+        printf 'pw-record'
+        return 0
+    fi
+    if command -v arecord >/dev/null 2>&1; then
+        printf 'arecord'
+        return 0
+    fi
+    return 1
+}
+
+# Launch the given recorder writing headerless raw S16LE mono 16k PCM to the
+# PCM fifo, backgrounded. pw-record streams to stdout (`-`) with no header;
+# arecord uses its raw mode.
+launch_raw_recorder() {
+    local recorder="$1"
+    case "$recorder" in
+        pw-record)
+            pw-record --rate 16000 --channels 1 --format s16 - 9>&- > "$PCM_FIFO" &
+            ;;
+        *)
+            "$recorder" -t raw -f S16_LE -r 16000 -c 1 - 9>&- > "$PCM_FIFO" &
+            ;;
+    esac
+}
+
 start_streaming() {
+    local recorder="${1:-pw-record}"
     rm -f "$WAV_FILE" "$FINAL_FILE" "$STREAM_LOG" "$PCM_FIFO"
     cleanup_stream_files
     mkfifo "$PCM_FIFO"
@@ -310,26 +350,17 @@ start_streaming() {
     local client_pid=$!
     echo "$client_pid" > "$CLIENT_PID_FILE"
 
-    arecord \
-        -t raw \
-        -f S16_LE \
-        -r 16000 \
-        -c 1 \
-        - 9>&- > "$PCM_FIFO" &
+    launch_raw_recorder "$recorder"
 
     local rec_pid=$!
     sleep 0.2
     if ! kill -0 "$rec_pid" 2>/dev/null; then
-        if ! kill -0 "$client_pid" 2>/dev/null; then
-            wait "$client_pid" 2>/dev/null || true
-            cleanup_stream_files
-            echo "[dictate] streaming unavailable within 1s, falling back to v1 batch" >&2
-            start_recording_batch
-            return 0
-        fi
         kill "$client_pid" 2>/dev/null || true
+        wait "$client_pid" 2>/dev/null || true
         cleanup_stream_files
-        die "pw-record failed to start"
+        echo "[dictate] recorder ($recorder) failed to start, falling back to batch" >&2
+        start_recording_batch
+        return 0
     fi
 
     sleep 0.8
@@ -423,9 +454,14 @@ main() {
             stop_batch
         fi
     else
-        if [[ "$WHISPER_STREAMING" == "1" ]]; then
-            start_streaming
+        local recorder=""
+        if [[ "$WHISPER_STREAMING" == "1" ]] && recorder=$(resolve_stream_recorder); then
+            start_streaming "$recorder"
         else
+            if [[ "$WHISPER_STREAMING" == "1" ]]; then
+                echo "[dictate] no streaming recorder available, using batch" >&2
+                notify "Streaming recorder missing, using batch" low
+            fi
             start_recording_batch
         fi
     fi

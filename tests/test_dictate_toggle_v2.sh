@@ -54,7 +54,9 @@ chmod +x "$MOCK_BIN/xdotool"
 cat > "$MOCK_BIN/pw-record" <<'SH'
 #!/usr/bin/env bash
 trap 'exit 0' INT TERM
-if printf '%s\n' "$*" | grep -q -- '--raw'; then
+out="${@: -1}"
+# Streaming target is stdout ("-"): emit headerless raw PCM continuously.
+if [[ "$out" == "-" ]]; then
     while true; do
         for _ in $(seq 1 1600); do
             printf '\0\0'
@@ -62,7 +64,7 @@ if printf '%s\n' "$*" | grep -q -- '--raw'; then
         sleep 0.05
     done
 fi
-out="${@: -1}"
+# Batch target is a file path: write a >1KB WAV-ish blob then idle.
 python3 - "$out" <<'PY'
 import sys
 from pathlib import Path
