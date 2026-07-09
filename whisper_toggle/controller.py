@@ -19,7 +19,11 @@ class State(str, Enum):
 
 class AudioPort(Protocol):
     def start(self) -> None: ...
-    def stop(self) -> bytes: ...
+    def stop(self) -> bytes:
+        """Return the captured audio as raw little-endian int16 mono PCM at the
+        recorder sample rate (16 kHz). It is NOT a WAV container — the ApiPort
+        adapter is responsible for any WAV framing before it hits the wire."""
+        ...
 
 
 class ApiPort(Protocol):
@@ -31,7 +35,10 @@ class ApiPort(Protocol):
         on_confirmed: Callable[[str], None],
         on_final: Callable[[str], None],
     ) -> None: ...
-    def batch(self, pcm: bytes) -> str: ...
+    def batch(self, pcm: bytes) -> str:
+        """Transcribe raw int16 mono PCM (see AudioPort.stop). The adapter wraps
+        it into a WAV before POSTing; callers pass PCM, never a WAV blob."""
+        ...
 
 
 class TyperPort(Protocol):
@@ -74,6 +81,13 @@ class Controller:
         self.on_state(state, message)
 
     def toggle(self) -> None:
+        # Non-blocking acquire held for the WHOLE call, transcription included.
+        # A press while we already hold the lock (recording teardown or an
+        # in-flight transcription) just fails the acquire and is ignored — the
+        # intended push-to-talk behavior — so there is no window in which a
+        # second toggle can start a new recording mid-finalize. toggle() runs on
+        # its own per-press thread, so holding the lock through a slow
+        # transcription blocks nothing but a duplicate press.
         if not self._lock.acquire(blocking=False):
             return
         try:
@@ -88,11 +102,7 @@ class Controller:
                 return
             self._start_recording()
         finally:
-            if self._lock.locked():
-                try:
-                    self._lock.release()
-                except RuntimeError:
-                    pass
+            self._lock.release()
 
     def _start_recording(self) -> None:
         self._confirmed = ""
@@ -112,9 +122,10 @@ class Controller:
             return
 
         self._set_state(State.PROCESSING, "Processing...")
-        # Release toggle lock for the duration of transcription so we don't
-        # hard-deadlock; re-check state for re-entry protection via PROCESSING.
-        self._lock.release()
+        # Transcription runs while we still hold the toggle lock (we are on a
+        # per-press thread). A concurrent press just fails the non-blocking
+        # acquire in toggle() and is ignored — no lock hand-off, no cross-thread
+        # release, no re-entrancy window.
         try:
             if self.config.streaming:
                 self._run_stream(pcm)
@@ -125,9 +136,6 @@ class Controller:
         finally:
             if self.state == State.PROCESSING:
                 self._set_state(State.IDLE, "Ready")
-            # Re-acquire only if still owned by us - toggle() finally also releases.
-            # We already released above; ensure finally of toggle doesn't double-release.
-            self._lock.acquire(blocking=False)
 
     def _run_batch(self, pcm: bytes) -> None:
         text = (self.api.batch(pcm) or "").strip()
@@ -142,6 +150,8 @@ class Controller:
         def on_partial(text: str) -> None:
             self._schedule_partial(text)
 
+        committed = {"final": False}
+
         def on_confirmed(text: str) -> None:
             self._flush_partial_timer()
             self._confirmed = self._merge_confirmed(self._confirmed, text)
@@ -154,8 +164,17 @@ class Controller:
             self.typer.commit_final(final)
             self._confirmed = final
             self._partial = ""
+            committed["final"] = True
 
         self.api.stream(pcm, on_partial, on_confirmed, on_final)
+        # A stream that ends without a `final` frame (server closed early, error
+        # after some confirmed text) must NOT drop the user's dictation: commit
+        # whatever was confirmed so far.
+        if not committed["final"]:
+            self._flush_partial_timer()
+            leftover = self._confirmed.strip()
+            if leftover:
+                self.typer.commit_final(leftover)
         self._set_state(State.IDLE, "Ready")
 
     def _merge_confirmed(self, prev: str, chunk: str) -> str:
