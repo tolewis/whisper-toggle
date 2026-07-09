@@ -33,6 +33,7 @@ from whisper_toggle.icons import tray_icon, write_app_icon
 from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
+from whisper_toggle.status_messages import startup_loading_notice
 from whisper_toggle.win_input import KeyboardAdapter, MicRecorder
 
 log = setup_logging("whisper-toggle.tray")
@@ -168,6 +169,13 @@ class TrayApp:
             return False
 
         self._set_state(State.STARTING, "Starting engine...")
+        self._notify(
+            startup_loading_notice(
+                model=self.model,
+                device=device,
+                hotkey=self.cfg.hotkey,
+            )
+        )
         try:
             creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             self.api_process = subprocess.Popen(
