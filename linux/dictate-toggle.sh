@@ -34,8 +34,6 @@ LOCK_FILE="$WORK_DIR/lock"
 NOTIFY_ID=991337
 KILL_TIMEOUT=1
 
-mkdir -p "$WORK_DIR"
-
 notify() {
     local message="$1"
     local urgency="${2:-normal}"
@@ -62,13 +60,6 @@ cleanup_stream_files() {
     rm -f "$PCM_FIFO" "$OSD_FIFO" "$CLIENT_PID_FILE" "$OSD_PID_FILE" "$MODE_FILE"
 }
 
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-    notify "Busy, wait a moment" low
-    exit 0
-fi
-trap cleanup_lock EXIT
-
 is_recording() {
     [[ -f "$PID_FILE" ]] || return 1
     local pid
@@ -76,33 +67,113 @@ is_recording() {
     kill -0 "$pid" 2>/dev/null
 }
 
-paste_text() {
-    local wm_class=""
-    local title=""
-    local target=""
-    local wid
-    if wid=$(xdotool getactivewindow 2>/dev/null); then
-        wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
+# True when running under a native Wayland session (no X11 tooling works).
+is_wayland() {
+    [[ -n "${WAYLAND_DISPLAY:-}" ]]
+}
+
+# Copy stdin to the clipboard using the session-appropriate tool. Degrades with
+# a notify-send message (never a silent no-op) when the required tool is absent.
+copy_to_clipboard() {
+    if is_wayland; then
+        if command -v wl-copy >/dev/null 2>&1; then
+            wl-copy
+        else
+            cat >/dev/null 2>&1 || true
+            notify "Install wl-clipboard (wl-copy) for Wayland clipboard" critical
+            return 1
+        fi
+    else
+        if command -v xclip >/dev/null 2>&1; then
+            xclip -selection clipboard
+        else
+            cat >/dev/null 2>&1 || true
+            notify "Install xclip for clipboard support" critical
+            return 1
+        fi
+    fi
+}
+
+# Echo "<wm_class> <title>" (lowercased) for the active window, or empty. On
+# Wayland there is no portable active-window query (GNOME blocks it), so we
+# gracefully degrade to an empty target and the default (non-terminal) paste.
+detect_window() {
+    if is_wayland; then
+        return 0
+    fi
+    local wid wm_class="" title=""
+    if command -v xdotool >/dev/null 2>&1 && wid=$(xdotool getactivewindow 2>/dev/null); then
+        if command -v xprop >/dev/null 2>&1; then
+            wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
+        fi
         title=$(xdotool getwindowname "$wid" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
     fi
-    target="$wm_class $title"
+    printf '%s %s' "$wm_class" "$title"
+}
+
+is_terminal_target() {
+    case "$1" in
+        *gnome-terminal*|*kgx*|*kitty*|*alacritty*|*foot*|*xterm*|*tilix*|*terminator*|*konsole*|*wezterm*|*st-256color*|*tmux*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Fire the paste keystroke (Ctrl+V, or Ctrl+Shift+V in terminals) via the
+# session-appropriate tool.
+paste_text() {
+    local target terminal=0
+    target=$(detect_window)
+    is_terminal_target "$target" && terminal=1
 
     sleep 0.05
 
-    case "$target" in
-        *gnome-terminal*|*kgx*|*kitty*|*alacritty*|*foot*|*xterm*|*tilix*|*terminator*|*konsole*|*wezterm*|*st-256color*|*tmux*)
-            xdotool key --clearmodifiers ctrl+shift+v
-            ;;
-        *)
-            xdotool key --clearmodifiers ctrl+v
-            ;;
-    esac
+    if is_wayland; then
+        if command -v wtype >/dev/null 2>&1; then
+            if (( terminal )); then
+                wtype -M ctrl -M shift -k v -m shift -m ctrl
+            else
+                wtype -M ctrl -k v -m ctrl
+            fi
+        else
+            notify "Install wtype for Wayland paste" critical
+            return 1
+        fi
+    else
+        if command -v xdotool >/dev/null 2>&1; then
+            if (( terminal )); then
+                xdotool key --clearmodifiers ctrl+shift+v
+            else
+                xdotool key --clearmodifiers ctrl+v
+            fi
+        else
+            notify "Install xdotool for paste support" critical
+            return 1
+        fi
+    fi
 }
 
 type_text() {
     local text="$1"
     sleep 0.05
-    xdotool type --clearmodifiers --delay 0 "$text"
+    if is_wayland; then
+        if command -v wtype >/dev/null 2>&1; then
+            wtype -- "$text"
+        else
+            notify "Install wtype for Wayland typing" critical
+            return 1
+        fi
+    else
+        if command -v xdotool >/dev/null 2>&1; then
+            xdotool type --clearmodifiers --delay 0 "$text"
+        else
+            notify "Install xdotool for typing support" critical
+            return 1
+        fi
+    fi
 }
 
 start_recording_batch() {
@@ -181,7 +252,7 @@ stop_batch() {
         exit 0
     fi
 
-    printf '%s' "$text" | xclip -selection clipboard
+    printf '%s' "$text" | copy_to_clipboard
     paste_text
 
     local chars=${#text}
@@ -322,7 +393,7 @@ stop_streaming() {
         exit 0
     fi
 
-    printf '%s' "$text" | xclip -selection clipboard
+    printf '%s' "$text" | copy_to_clipboard
     paste_text
     local chars=${#text}
     local preview="${text:0:60}"
@@ -330,21 +401,38 @@ stop_streaming() {
     notify "$preview  (${chars} chars)"
 }
 
-mode="batch"
-if [[ -f "$MODE_FILE" ]]; then
-    mode=$(<"$MODE_FILE")
-fi
+main() {
+    mkdir -p "$WORK_DIR"
 
-if is_recording; then
-    if [[ "$mode" == "stream" ]]; then
-        stop_streaming
-    else
-        stop_batch
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        notify "Busy, wait a moment" low
+        exit 0
     fi
-else
-    if [[ "$WHISPER_STREAMING" == "1" ]]; then
-        start_streaming
-    else
-        start_recording_batch
+    trap cleanup_lock EXIT
+
+    local mode="batch"
+    if [[ -f "$MODE_FILE" ]]; then
+        mode=$(<"$MODE_FILE")
     fi
+
+    if is_recording; then
+        if [[ "$mode" == "stream" ]]; then
+            stop_streaming
+        else
+            stop_batch
+        fi
+    else
+        if [[ "$WHISPER_STREAMING" == "1" ]]; then
+            start_streaming
+        else
+            start_recording_batch
+        fi
+    fi
+}
+
+# Only run the toggle when executed directly; sourcing (e.g. from tests)
+# exposes the helper functions without side effects.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
 fi

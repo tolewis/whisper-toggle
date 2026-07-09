@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -41,25 +42,69 @@ def write_osd(osd, line: str):
         return
 
 
-def type_text(text: str):
-    if not text:
-        return
+_warned_tools: set[str] = set()
+
+
+def _wayland() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _run_quiet(cmd) -> None:
     subprocess.run(
-        ["xdotool", "type", "--clearmodifiers", "--delay", "0", text],
+        cmd,
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
 
+def _warn_missing(tool: str) -> None:
+    if tool in _warned_tools:
+        return
+    _warned_tools.add(tool)
+    message = f"Install {tool} for in-place partial typing"
+    if shutil.which("notify-send"):
+        _run_quiet(["notify-send", "-a", "Dictation", "--", message])
+    print(f"[dictate] {message}", file=sys.stderr)
+
+
+def type_text(text: str):
+    if not text:
+        return
+    if _wayland():
+        if shutil.which("wtype"):
+            _run_quiet(["wtype", "--", text])
+        else:
+            _warn_missing("wtype")
+    else:
+        if shutil.which("xdotool"):
+            _run_quiet(["xdotool", "type", "--clearmodifiers", "--delay", "0", text])
+        else:
+            _warn_missing("xdotool")
+
+
+def _backspace(count: int) -> None:
+    if count <= 0:
+        return
+    if _wayland():
+        if shutil.which("wtype"):
+            args = ["wtype"]
+            for _ in range(count):
+                args.extend(["-k", "BackSpace"])
+            _run_quiet(args)
+        else:
+            _warn_missing("wtype")
+    else:
+        if shutil.which("xdotool"):
+            _run_quiet(
+                ["xdotool", "key", "--clearmodifiers", "--repeat", str(count), "--delay", "0", "BackSpace"]
+            )
+        else:
+            _warn_missing("xdotool")
+
+
 def revise_text(previous: str, current: str) -> str:
-    if previous:
-        subprocess.run(
-            ["xdotool", "key", "--clearmodifiers", "--repeat", str(len(previous)), "--delay", "0", "BackSpace"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    _backspace(len(previous))
     type_text(current)
     return current
 

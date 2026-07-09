@@ -120,6 +120,9 @@ MOCK_WS_PORT="$PORT" python3 "$TMP/mock_ws.py" &
 SERVER_PID=$!
 sleep 0.3
 
+# Force the X11 code path deterministically regardless of the host session.
+unset WAYLAND_DISPLAY
+
 export PATH="$MOCK_BIN:$PATH"
 export XDOTOOL_LOG="$TMP/xdotool.log"
 export XCLIP_LOG="$TMP/xclip.log"
