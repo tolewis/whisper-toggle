@@ -111,6 +111,11 @@ def main() -> int:
     parser.add_argument("--windows-ready-sec", type=float, default=2.5)
     parser.add_argument("--whisper-ready-sec", type=float, default=0.5)
     parser.add_argument("--tail-sec", type=float, default=7.0)
+    parser.add_argument(
+        "--allow-unverified-foreground",
+        action="store_true",
+        help="dangerous: send hotkeys even if the benchmark window is not foreground",
+    )
     args = parser.parse_args()
 
     started = time.perf_counter()
@@ -146,7 +151,9 @@ def main() -> int:
         if finished:
             return
         finished = True
-        result["final_text"] = text.get("1.0", "end-1c")
+        target_text = text.get("1.0", "end-1c")
+        result["target_text"] = target_text
+        result["final_text"] = target_text
         result["elapsed_sec"] = round(time.perf_counter() - started, 3)
         if error:
             result["error"] = error
@@ -180,9 +187,29 @@ def main() -> int:
     def focus_target() -> None:
         root.deiconify()
         root.lift()
+        root.attributes("-topmost", True)
+        root.update_idletasks()
+        hwnd = int(root.winfo_id())
+        foreground = None
+        try:
+            if user32 is not None:
+                user32.ShowWindow(hwnd, 5)
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                root.update()
+                time.sleep(0.2)
+                foreground = int(user32.GetForegroundWindow())
+        except Exception as exc:  # noqa: BLE001
+            record_event("focus_warning", error=str(exc), error_type=type(exc).__name__)
         root.focus_force()
         text.focus_force()
-        record_event("focused")
+        result["target_hwnd"] = hwnd
+        result["foreground_hwnd"] = foreground
+        record_event("focused", target_hwnd=hwnd, foreground_hwnd=foreground)
+        if foreground not in (None, hwnd) and not args.allow_unverified_foreground:
+            raise RuntimeError(
+                f"benchmark window is not foreground (target={hwnd}, foreground={foreground}); refusing to send hotkeys"
+            )
 
     def start_sequence() -> None:
         focus_target()
