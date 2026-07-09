@@ -9,7 +9,7 @@ Use the Windows installer built from `windows/build-installer.ps1`:
 ```powershell
 cd C:\src\Whisper-Toggle
 powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-# dist\WhisperToggle-Setup-2.0.2.exe
+# dist\WhisperToggle-Setup-2.0.3.exe
 ```
 
 The installer deploys to:
@@ -18,7 +18,9 @@ The installer deploys to:
 %LOCALAPPDATA%\Whisper Toggle
 ```
 
-It includes embedded Python, the tray app, settings GUI, local FastAPI server, and model/runtime dependencies.
+It includes embedded Python, the tray app, settings GUI, local FastAPI server, model/runtime dependencies, and CUDA 12 cuBLAS/cudart DLLs for CTranslate2 GPU inference.
+
+During install, setup runs `python -m whisper_toggle.smoke --from-config`. The install fails before launch if the selected local model/device cannot load and complete a tiny transcription. Details are written to `%LOCALAPPDATA%\Whisper Toggle\logs\install-smoke.json`.
 
 ## Use it
 

@@ -59,7 +59,7 @@ PYTHONPATH=. pytest tests/ -q
 ```powershell
 cd C:\path\to\Whisper-Toggle
 powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-# → dist\WhisperToggle-Setup-2.0.2.exe
+# → dist\WhisperToggle-Setup-2.0.3.exe
 ```
 
 Requires Inno Setup 6 on the build host (present on jubiku).
@@ -79,6 +79,7 @@ See [docs/linux-setup.md](docs/linux-setup.md). Hotkeys Super+H / Ctrl+`.
 | Version | Date | What's new |
 |---------|------|-----------|
 | **2.0.x** | 2026-07 | Windows product: reliable Ctrl+Shift+H default, tray GUI, settings, clipboard paste injection, optional Win+H/live partials |
+| **2.0.3** | 2026-07 | Windows installer bundles CUDA 12 cuBLAS/cudart and fails install unless local model/GPU/CPU smoke validation passes |
 | **2.0.2** | 2026-07 | Windows/Linux terminal-aware insertion, non-blocking Settings save, live preview overlay, restored Exit app control, streaming dependency fix |
 | **2.0.1** | 2026-07 | Windows hotkey/input reliability: native hotkey path, instant mic start, async toasts |
 | **2.0.0** | 2026-07 | Windows product: Win+H, live partials, tray GUI, icon, DeviceResolver, installer 2.0 |

@@ -52,6 +52,15 @@ if (Test-Path "$RepoRoot\vendor\whisper_streaming") {
     Copy-Item "$RepoRoot\vendor\whisper_streaming" "$AppDir\vendor\whisper_streaming" -Recurse -Force
 }
 
+Write-Host "Validating local model/device (first run may download model weights) ..." -ForegroundColor Yellow
+Push-Location $AppDir
+try {
+    & $vpython -m whisper_toggle.smoke --from-config --log "$AppDir\logs\install-smoke.json"
+    if ($LASTEXITCODE -ne 0) { throw "Whisper Toggle validation failed; see $AppDir\logs\install-smoke.json" }
+} finally {
+    Pop-Location
+}
+
 Write-Host ""
 Write-Host "=== Installation complete ===" -ForegroundColor Green
 Write-Host "Files installed to: $AppDir"

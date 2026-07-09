@@ -1,20 +1,20 @@
-; installer.iss - Inno Setup script for Whisper Toggle v2.0.2
+; installer.iss - Inno Setup script for Whisper Toggle v2.0.3
 ;
 ; Build:
 ;   1. powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-;   2. ISCC compiles this into WhisperToggle-Setup-2.0.2.exe
+;   2. ISCC compiles this into WhisperToggle-Setup-2.0.3.exe
 
 [Setup]
 AppId={{A7D3F2E1-B8C4-4F5A-9E6D-1C2B3A4F5E6D}
 AppName=Whisper Toggle
-AppVersion=2.0.2
-AppVerName=Whisper Toggle 2.0.2
+AppVersion=2.0.3
+AppVerName=Whisper Toggle 2.0.3
 AppPublisher=Tim Lewis
 AppPublisherURL=https://github.com/tolewis/Whisper-Toggle
 AppSupportURL=https://github.com/tolewis/Whisper-Toggle/issues
 DefaultDirName={localappdata}\Whisper Toggle
 DefaultGroupName=Whisper Toggle
-OutputBaseFilename=WhisperToggle-Setup-2.0.2
+OutputBaseFilename=WhisperToggle-Setup-2.0.3
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\assets\icon.ico
 Compression=lzma2/ultra64
@@ -82,6 +82,29 @@ Filename: "{app}\python\pythonw.exe"; \
     WorkingDir: "{app}"; \
     Description: "Launch Whisper Toggle now"; \
     Flags: postinstall nowait skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  PythonExe: String;
+  SmokeLog: String;
+  Args: String;
+begin
+  if CurStep = ssPostInstall then begin
+    PythonExe := ExpandConstant('{app}\python\python.exe');
+    SmokeLog := ExpandConstant('{app}\logs\install-smoke.json');
+    Args := '-m whisper_toggle.smoke --from-config --log "' + SmokeLog + '"';
+    if not Exec(PythonExe, Args, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then begin
+      MsgBox('Whisper Toggle validation could not start. Setup will stop before launching the app.', mbError, MB_OK);
+      Abort;
+    end;
+    if ResultCode <> 0 then begin
+      MsgBox('Whisper Toggle validation failed. Setup will stop before launching the app. See: ' + SmokeLog, mbError, MB_OK);
+      Abort;
+    end;
+  end;
+end;
 
 [UninstallRun]
 Filename: "taskkill.exe"; \

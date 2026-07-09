@@ -41,6 +41,14 @@ import numpy as np
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
+try:
+    from whisper_toggle.cuda_env import configure_cuda_dll_paths, has_cuda12_runtime
+
+    configure_cuda_dll_paths()
+except Exception:
+    # CUDA path setup must never prevent CPU-only startup.
+    pass
+
 from faster_whisper import WhisperModel
 
 try:
@@ -69,20 +77,56 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-APP_VERSION = env("WHISPER_API_VERSION", "2.0.2")
+APP_VERSION = env("WHISPER_API_VERSION", "2.0.3")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 
 @app.on_event("startup")
 def _preload_model_if_requested():
-    """Optional warm-load so first dictation is not a cold start."""
+    """Optional warm-load/smoke so first dictation is not a cold start.
+
+    A plain WhisperModel constructor is not enough on CUDA: missing cuBLAS can
+    surface only when the first encode runs. When WHISPER_API_REQUIRE_SMOKE=1,
+    startup consumes a tiny silence transcription and lets uvicorn exit on any
+    CUDA/model failure.
+    """
     if env("WHISPER_API_PRELOAD", "0").strip() not in ("1", "true", "yes", "on"):
         return
     try:
-        get_model(DEFAULT_MODEL, DEFAULT_DEVICE, DEFAULT_COMPUTE)
+        model = get_model(DEFAULT_MODEL, DEFAULT_DEVICE, DEFAULT_COMPUTE)
+        if env("WHISPER_API_REQUIRE_SMOKE", "0").strip() in ("1", "true", "yes", "on"):
+            _smoke_model(model)
     except Exception:
-        # Leave engine up; first request will surface the error.
-        pass
+        log.exception("model preload/smoke failed")
+        if env("WHISPER_API_REQUIRE_SMOKE", "0").strip() in ("1", "true", "yes", "on"):
+            raise
+
+
+def _smoke_model(model: WhisperModel) -> None:
+    """Run one tiny transcription so CUDA/model failures happen at startup."""
+    import wave
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        with wave.open(tmp_path, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(STREAM_SAMPLE_RATE)
+            wav.writeframes(b"\x00\x00" * STREAM_SAMPLE_RATE)
+        segments, _info = model.transcribe(
+            tmp_path,
+            language=DEFAULT_LANG,
+            vad_filter=False,
+            beam_size=1,
+        )
+        # Consume the generator: CTranslate2 encode errors surface here.
+        _ = "".join(segment.text for segment in segments)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 # Simple in-process cache so repeated calls don't reload weights.
 _model_cache: dict[tuple[str, str, str], WhisperModel] = {}
@@ -108,6 +152,10 @@ def runtime():
     backend = "faster-whisper"
     if DEFAULT_DEVICE in ("vulkan", "whisper.cpp"):
         backend = "whisper.cpp"
+    try:
+        cuda12_runtime_present = has_cuda12_runtime() if DEFAULT_DEVICE == "cuda" else None
+    except Exception:
+        cuda12_runtime_present = None
     return {
         "ok": True,
         "version": APP_VERSION,
@@ -118,6 +166,7 @@ def runtime():
         "backend": backend,
         "streaming": True,
         "stream_sample_rate": STREAM_SAMPLE_RATE,
+        "cuda12_runtime_present": cuda12_runtime_present,
         "models_cached": [list(k) for k in _model_cache.keys()],
     }
 

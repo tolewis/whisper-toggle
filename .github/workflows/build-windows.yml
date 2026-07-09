@@ -58,6 +58,7 @@ jobs:
             - Hotkey: **Ctrl+Shift+H** by default (reliable on Windows 11)
             - **Win+H** and live partials are optional in Settings after disabling Windows Voice Typing
             - Local Whisper on NVIDIA CUDA or CPU (Intel Iris)
+            - Installer bundles CUDA 12 cuBLAS/cudart and validates the selected model/device before launch
             - System tray + settings GUI + branded icon
 
             Your voice never leaves the machine.

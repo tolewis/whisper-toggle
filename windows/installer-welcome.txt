@@ -1,4 +1,4 @@
-Whisper Toggle 2.0
+Whisper Toggle 2.0.3
 
 Talk to your computer. It types for you - private, local, and reliable.
 
@@ -11,5 +11,6 @@ After install:
 Win+H and live partials are available in Settings, but Ctrl+Shift+H + batch paste is the reliable Windows 11 default.
 
 Works on NVIDIA GPUs (CUDA) and falls back to CPU on Intel Iris (e.g. unhook laptop).
+The installer validates the selected local model/device before launch and stops if CUDA/model loading fails.
 
 Your voice never leaves this PC.

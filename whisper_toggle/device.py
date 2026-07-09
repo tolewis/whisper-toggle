@@ -53,7 +53,17 @@ def _default_probe_cuda() -> ProbeResult:
     except Exception as exc:  # noqa: BLE001
         return ProbeResult(ok=False, backend="cuda", detail=f"nvidia-smi failed: {exc}")
 
-    # Optional deeper smoke: try importing ctranslate2 cuda — soft fail to still report nvidia present
+    cuda_dll_detail = "cuda DLL path probe not run"
+    try:
+        from .cuda_env import configure_cuda_dll_paths, has_cuda12_runtime
+
+        configure_cuda_dll_paths()
+        cuda_dll_detail = "cuda12 runtime DLLs present" if has_cuda12_runtime() else "cuda12 runtime DLLs not found"
+    except Exception as exc:  # noqa: BLE001
+        cuda_dll_detail = f"cuda DLL path probe soft-fail: {exc}"
+
+    # Optional deeper probe: try importing ctranslate2 cuda — soft fail to still report nvidia present.
+    # The install/runtime smoke consumes a real transcription and catches missing cuBLAS/cudart.
     try:
         import ctranslate2  # type: ignore
 
@@ -63,19 +73,19 @@ def _default_probe_cuda() -> ProbeResult:
                 return ProbeResult(
                     ok=False,
                     backend="cuda",
-                    detail="ctranslate2 reports 0 CUDA devices",
+                    detail=f"ctranslate2 reports 0 CUDA devices; {cuda_dll_detail}",
                     vram_mb=vram,
                 )
     except Exception as exc:  # noqa: BLE001
-        # nvidia-smi present is still a strong signal; engine will fall back on load failure
+        # nvidia-smi present is still a strong signal; smoke/load will catch hard failures.
         return ProbeResult(
             ok=True,
             backend="cuda",
-            detail=f"nvidia-smi ok; ctranslate2 probe soft-fail: {exc}",
+            detail=f"nvidia-smi ok; {cuda_dll_detail}; ctranslate2 probe soft-fail: {exc}",
             vram_mb=vram,
         )
 
-    return ProbeResult(ok=True, backend="cuda", detail="cuda available", vram_mb=vram)
+    return ProbeResult(ok=True, backend="cuda", detail=f"cuda available; {cuda_dll_detail}", vram_mb=vram)
 
 
 def _default_probe_vulkan() -> ProbeResult:

@@ -62,6 +62,9 @@ Write-Host "    API: faster-whisper, fastapi, uvicorn, websockets, numpy"
 & "$PythonDir\python.exe" -m pip install --quiet `
     "faster-whisper==1.2.1" "ctranslate2==4.7.1" "fastapi==0.131.0" "uvicorn[standard]==0.41.0" `
     "python-multipart>=0.0.20" "numpy>=1.26" "websockets>=15.0" "httpx>=0.27"
+Write-Host "    CUDA 12 runtime: cuBLAS + cudart (for CTranslate2 GPU inference)"
+& "$PythonDir\python.exe" -m pip install --quiet `
+    "nvidia-cublas-cu12==12.9.1.4" "nvidia-cuda-runtime-cu12==12.9.79"
 Write-Host "    Tray: keyboard, sounddevice, pystray, Pillow, ..."
 & "$PythonDir\python.exe" -m pip install --quiet `
     keyboard sounddevice soundfile numpy requests pyperclip pystray Pillow winotify
