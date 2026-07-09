@@ -53,7 +53,7 @@ jobs:
           body: |
             ## Whisper Toggle ${{ github.ref_name }}
 
-            **Download `WhisperToggle-Setup-2.0.0.exe`, run it, done.**
+            **Download the attached `WhisperToggle-Setup-*.exe`, run it, done.**
 
             - Hotkey: **Ctrl+Shift+H** by default (reliable on Windows 11)
             - **Win+H** and live partials are optional in Settings after disabling Windows Voice Typing
