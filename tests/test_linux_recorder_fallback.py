@@ -10,9 +10,11 @@ pw-record so a pipewire-only install works without ALSA at all.
 from __future__ import annotations
 
 import os
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -79,6 +81,32 @@ def sandbox(tmp_path):
     out_file = tmp_path / "stdout.txt"
     err_file = tmp_path / "stderr.txt"
 
+    def cleanup_processes():
+        pids: list[int] = []
+        for name in ("rec.pid", "client.pid", "osd.pid"):
+            pid_file = work / name
+            if not pid_file.exists():
+                continue
+            try:
+                pids.append(int(pid_file.read_text().strip()))
+            except ValueError:
+                continue
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 1.0
+        while pids and time.monotonic() < deadline:
+            pids = [pid for pid in pids if _pid_exists(pid)]
+            if pids:
+                time.sleep(0.05)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def run(extra_env):
         env = {
             "PATH": str(bind),
@@ -107,9 +135,18 @@ def sandbox(tmp_path):
         mode_file = work / "mode"
         if mode_file.exists():
             mode = mode_file.read_text().strip()
+        cleanup_processes()
         return proc, stdout, stderr, mode
 
     return run
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_missing_streaming_recorder_falls_back_to_batch(sandbox):
