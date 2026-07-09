@@ -81,14 +81,29 @@ class NativeHotkeyHandle:
                 key = part
         if key is None:
             raise ValueError(f"missing key in hotkey {hotkey!r}")
+        key_map = {
+            "space": 0x20,
+            "tab": 0x09,
+            "enter": 0x0D,
+            "return": 0x0D,
+            "esc": 0x1B,
+            "escape": 0x1B,
+            "backspace": 0x08,
+            "caps": 0x14,
+            "capslock": 0x14,
+            "caps lock": 0x14,
+            "grave": 0xC0,
+            "tilde": 0xC0,
+            "`": 0xC0,
+        }
         if len(key) == 1 and "a" <= key <= "z":
             vk = ord(key.upper())
         elif len(key) == 1 and "0" <= key <= "9":
             vk = ord(key)
         elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 24:
             vk = 0x70 + int(key[1:]) - 1
-        elif key == "space":
-            vk = 0x20
+        elif key in key_map:
+            vk = key_map[key]
         else:
             raise ValueError(f"unsupported hotkey key {key!r}")
         return mods, vk

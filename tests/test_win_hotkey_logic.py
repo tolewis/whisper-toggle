@@ -52,3 +52,15 @@ def test_native_hotkey_parse_win_h():
     assert mods & NativeHotkeyHandle.MOD_WIN
     assert mods & NativeHotkeyHandle.MOD_NOREPEAT
     assert vk == ord("H")
+
+
+def test_native_hotkey_parse_caps_lock_and_grave():
+    from whisper_toggle.win_input import NativeHotkeyHandle
+
+    mods, vk = NativeHotkeyHandle._parse("caps lock")
+    assert mods & NativeHotkeyHandle.MOD_NOREPEAT
+    assert vk == 0x14
+
+    mods, vk = NativeHotkeyHandle._parse("ctrl+`")
+    assert mods & NativeHotkeyHandle.MOD_CONTROL
+    assert vk == 0xC0

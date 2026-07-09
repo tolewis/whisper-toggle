@@ -467,16 +467,10 @@ class TrayApp:
             except Exception as exc:  # noqa: BLE001
                 log.exception("Win+H owner failed: %s", exc)
 
-            # Fallback: keyboard lib (may not fully suppress OS voice typing)
-            try:
-                self._hotkey_handle = self.kb.add_hotkey("win+h", self.toggle, suppress=True)
-                log.warning("using keyboard-lib win+h fallback (OS may still open voice typing)")
-                self._ensure_backup_hotkey()
-                return
-            except Exception as exc:  # noqa: BLE001
-                log.error("win+h fallback failed: %s", exc)
-
-            # Last resort alternate
+            # Do not fall back to a keyboard-lib Win+H hook: Windows 11 often
+            # lets the focused app receive the trailing "h" and/or opens Voice
+            # Typing anyway. If the native owner is unavailable, keep Windows'
+            # default behavior intact and switch Whisper Toggle to Ctrl+Shift+H.
             try:
                 self._hotkey_handle = self.kb.add_hotkey("ctrl+shift+h", self.toggle, suppress=True)
                 self.cfg.hotkey = "ctrl+shift+h"
