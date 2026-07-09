@@ -31,17 +31,34 @@ def test_default_config_roundtrip(tmp_path: Path):
 
 
 def test_hotkey_aliases_normalized_on_load(tmp_path: Path):
-    """'windows+' alias and case/space are normalized when a config is loaded."""
+    """'windows+' alias and case/space are normalized when a config is loaded.
+
+    Uses a non-reserved key (win+space) so this exercises aliasing, not the
+    Win+H unsupported-hotkey fallback covered separately.
+    """
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"hotkey": "Windows+H"}), encoding="utf-8")
+    path.write_text(json.dumps({"hotkey": "Windows+Space"}), encoding="utf-8")
     loaded = load_config(path)
-    assert loaded.hotkey == "win+h"
+    assert loaded.hotkey == "win+space"
 
 
 def test_load_missing_returns_defaults(tmp_path: Path):
     cfg = load_config(tmp_path / "missing.json")
     assert cfg.hotkey == "ctrl+shift+h"
     assert cfg.streaming is False
+
+
+def test_win_h_is_unsupported_and_falls_back_to_default(tmp_path: Path):
+    """Windows 11 reserves Win+H for OS voice typing; it cannot be reliably
+    claimed, so a win+h config self-heals to the default rather than binding a
+    hotkey the user 'still can't use'."""
+    from whisper_toggle.config import DEFAULT_HOTKEY
+
+    for raw in ("win+h", "Windows+H", "WIN+H"):
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"hotkey": raw}), encoding="utf-8")
+        cfg = load_config(path)
+        assert cfg.hotkey == DEFAULT_HOTKEY
 
 
 # ── A4: type validation on load ────────────────────────────────────────────

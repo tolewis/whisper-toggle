@@ -257,9 +257,10 @@ class SettingsApp:
 
         chips = ttk.Frame(card1, style="Surface.TFrame")
         chips.pack(fill=tk.X, padx=14, pady=(0, 12))
+        # Win+H is intentionally NOT offered: Windows 11 reserves it for the OS
+        # voice-typing launcher and will not let the app reliably claim it.
         for label, value in (
             ("Ctrl+Shift+H", "ctrl+shift+h"),
-            ("Win+H", "win+h"),
             ("Ctrl+`", "ctrl+`"),
             ("F9", "f9"),
         ):
@@ -273,7 +274,7 @@ class SettingsApp:
         ttk.Label(
             card1,
             text="Tip: Ctrl+Shift+H is the most reliable on Windows 11. "
-            "Win+H needs the Windows Voice Typing launcher turned off.",
+            "Win+H is not offered - Windows reserves it for its own voice typing.",
             style="Muted.TLabel",
             wraplength=440,
             justify="left",

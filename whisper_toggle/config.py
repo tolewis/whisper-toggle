@@ -14,6 +14,11 @@ from pathlib import Path
 DEFAULT_HOTKEY = "ctrl+shift+h"
 CONFIG_VERSION = "2.1.0"
 
+# Windows 11 reserves Win+H for its voice-typing launcher and will not let an app
+# reliably claim it, so it is not offered as an option and any stored value heals
+# to the default.
+UNSUPPORTED_HOTKEYS = frozenset({"win+h"})
+
 
 @dataclass
 class AppConfig:
@@ -86,6 +91,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             setattr(cfg, key, value)
     # Normalize hotkey aliases
     hk = (cfg.hotkey or DEFAULT_HOTKEY).strip().lower().replace("windows+", "win+")
+    if hk in UNSUPPORTED_HOTKEYS:
+        hk = DEFAULT_HOTKEY
     cfg.hotkey = hk
     cfg.version = CONFIG_VERSION
     return cfg
