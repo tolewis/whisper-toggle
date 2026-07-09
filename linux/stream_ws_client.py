@@ -13,6 +13,11 @@ import sys
 
 
 CONNECT_ERROR = 75
+STREAM_ERROR = 76
+
+
+class StreamAbort(Exception):
+    """Raised when the server signals an error or closes before a final."""
 
 
 def parse_args():
@@ -83,6 +88,9 @@ async def receive_messages(websocket, final_file: Path, osd, xdotool_partials: b
         write_osd(osd, line)
 
         kind = payload.get("type")
+        if kind == "error":
+            detail = str(payload.get("message", "server error"))
+            raise StreamAbort(f"server error: {detail}")
         text = str(payload.get("text", ""))
         if xdotool_partials and kind in ("partial", "confirmed"):
             typed = revise_text(typed, text)
@@ -91,6 +99,9 @@ async def receive_messages(websocket, final_file: Path, osd, xdotool_partials: b
             if xdotool_partials and typed:
                 revise_text(typed, "")
             return
+
+    # The socket closed without ever delivering a final transcript.
+    raise StreamAbort("stream closed before final transcript")
 
 
 async def run(args) -> int:
@@ -120,12 +131,26 @@ async def run(args) -> int:
             )
             for task in pending:
                 task.cancel()
-            for task in done:
-                exc = task.exception()
-                if exc is not None:
+            for task in pending:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            exceptions = [
+                task.exception() for task in done if task.exception() is not None
+            ]
+            # Prefer a StreamAbort so a server error maps to STREAM_ERROR even
+            # if the sender also tripped on the closing socket.
+            for exc in exceptions:
+                if isinstance(exc, StreamAbort):
                     raise exc
+            if exceptions:
+                raise exceptions[0]
             return 0
-    except OSError as exc:
+    except StreamAbort as exc:
+        print(f"[dictate] streaming aborted: {exc}", file=sys.stderr)
+        return STREAM_ERROR
+    except (OSError, asyncio.TimeoutError, websockets.exceptions.WebSocketException) as exc:
         print(f"[dictate] streaming connection failed: {exc}", file=sys.stderr)
         return CONNECT_ERROR
     finally:
