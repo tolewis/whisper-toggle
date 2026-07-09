@@ -64,3 +64,13 @@ def test_native_hotkey_parse_caps_lock_and_grave():
     mods, vk = NativeHotkeyHandle._parse("ctrl+`")
     assert mods & NativeHotkeyHandle.MOD_CONTROL
     assert vk == 0xC0
+
+
+def test_terminal_target_detection():
+    from whisper_toggle.win_input import KeyboardAdapter
+
+    kb = object.__new__(KeyboardAdapter)
+    assert kb._is_terminal_target({"process": "WindowsTerminal.exe", "class": "", "title": ""})
+    assert kb._is_terminal_target({"process": "", "class": "CASCADIA_HOSTING_WINDOW_CLASS", "title": ""})
+    assert kb._is_terminal_target({"process": "", "class": "", "title": "tmux on server"})
+    assert not kb._is_terminal_target({"process": "notepad.exe", "class": "Edit", "title": "Untitled"})

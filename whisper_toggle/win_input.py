@@ -225,6 +225,18 @@ class KeyboardAdapter:
             except Exception:
                 previous = None
 
+        target = self._foreground_window_info() if sys.platform.startswith("win") else {}
+        if self._is_terminal_target(target):
+            try:
+                # Windows Terminal / PowerShell / tmux are most reliable when
+                # we type Unicode directly. Their paste chords vary by host
+                # and profile, while SendInput text lands at the prompt.
+                self._send_unicode_text(text)
+                log.info("typed %d chars directly into terminal target: %s", len(text), target)
+                return
+            except Exception as exc:  # noqa: BLE001
+                log.warning("terminal direct type failed for %s: %s", target, exc)
+
         try:
             pyperclip.copy(text)
         except Exception as exc:  # noqa: BLE001
@@ -235,9 +247,13 @@ class KeyboardAdapter:
         time.sleep(0.10)
         pasted = False
         try:
-            self._send_ctrl_v_sendinput()
+            if self._is_terminal_target(target):
+                self._send_ctrl_shift_v_sendinput()
+                log.info("pasted %d chars via SendInput ctrl+shift+v into terminal", len(text))
+            else:
+                self._send_ctrl_v_sendinput()
+                log.info("pasted %d chars via SendInput ctrl+v", len(text))
             pasted = True
-            log.info("pasted %d chars via SendInput ctrl+v", len(text))
         except Exception as exc:  # noqa: BLE001
             log.warning("SendInput paste failed: %s", exc)
 
@@ -270,11 +286,18 @@ class KeyboardAdapter:
 
     def _send_ctrl_v_sendinput(self) -> None:
         """Low-level Ctrl+V independent of the keyboard hook stack."""
-        vk_control = 0x11
-        vk_v = 0x56
-        self._send_vk(vk_control, down=True, up=False)
-        self._send_vk(vk_v, down=True, up=True)
-        self._send_vk(vk_control, down=False, up=True)
+        self._send_chord((0x11,), 0x56)
+
+    def _send_ctrl_shift_v_sendinput(self) -> None:
+        """Low-level Ctrl+Shift+V for terminal hosts that reserve Ctrl+V."""
+        self._send_chord((0x11, 0x10), 0x56)
+
+    def _send_chord(self, modifiers: tuple[int, ...], key_vk: int) -> None:
+        for vk in modifiers:
+            self._send_vk(vk, down=True, up=False)
+        self._send_vk(key_vk, down=True, up=True)
+        for vk in reversed(modifiers):
+            self._send_vk(vk, down=False, up=True)
 
     def _send_vk(self, vk: int, *, down: bool = True, up: bool = True) -> None:
         import ctypes
@@ -396,6 +419,91 @@ class KeyboardAdapter:
             sent = user32.SendInput(len(batch), array_type(*batch), ctypes.sizeof(Input))
             if sent != len(batch):
                 raise ctypes.WinError(ctypes.get_last_error())
+            time.sleep(0.005)
+
+    def _foreground_window_info(self) -> dict[str, str | int]:
+        """Best-effort description of the focused window for paste strategy."""
+        if not sys.platform.startswith("win"):
+            return {}
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return {}
+
+            title_buf = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, title_buf, len(title_buf))
+            class_buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buf, len(class_buf))
+
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            process_name = ""
+            process_path = ""
+            if pid.value:
+                process_query_limited_information = 0x1000
+                handle = kernel32.OpenProcess(process_query_limited_information, False, pid.value)
+                if handle:
+                    try:
+                        size = wintypes.DWORD(1024)
+                        path_buf = ctypes.create_unicode_buffer(size.value)
+                        if kernel32.QueryFullProcessImageNameW(handle, 0, path_buf, ctypes.byref(size)):
+                            process_path = path_buf.value
+                            process_name = process_path.rsplit("\\", 1)[-1]
+                    finally:
+                        kernel32.CloseHandle(handle)
+            return {
+                "hwnd": int(hwnd),
+                "pid": int(pid.value),
+                "process": process_name.lower(),
+                "path": process_path,
+                "class": class_buf.value,
+                "title": title_buf.value,
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.debug("foreground info failed: %s", exc)
+            return {}
+
+    def _is_terminal_target(self, info: dict[str, str | int]) -> bool:
+        process = str(info.get("process") or "").lower()
+        cls = str(info.get("class") or "").lower()
+        title = str(info.get("title") or "").lower()
+        terminal_processes = {
+            "windowsterminal.exe",
+            "wt.exe",
+            "openterminal.exe",
+            "openconsole.exe",
+            "conhost.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "cmd.exe",
+            "bash.exe",
+            "wsl.exe",
+            "ubuntu.exe",
+            "debian.exe",
+            "kali.exe",
+            "mintty.exe",
+            "alacritty.exe",
+            "wezterm-gui.exe",
+            "wezterm.exe",
+            "conemu64.exe",
+            "conemu.exe",
+            "putty.exe",
+            "mobaxterm.exe",
+        }
+        terminal_classes = {
+            "cascadia_hosting_window_class",
+            "consolewindowclass",
+            "mintty",
+            "sunawtframe",
+        }
+        if process in terminal_processes or cls in terminal_classes:
+            return True
+        return any(token in title for token in ("powershell", "command prompt", "windows terminal", "tmux"))
 
     def _wait_modifiers_up(self, timeout: float = 1.0) -> None:
         """Do not inject while Ctrl/Shift/Alt/Win from the hotkey are still down."""

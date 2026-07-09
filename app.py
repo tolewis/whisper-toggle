@@ -43,6 +43,15 @@ from fastapi.websockets import WebSocketState
 
 from faster_whisper import WhisperModel
 
+try:
+    from whisper_toggle.logging_setup import setup_logging
+
+    log = setup_logging("whisper-toggle.api")
+except Exception:  # pragma: no cover - logging must never block API startup
+    import logging
+
+    log = logging.getLogger("whisper-toggle.api")
+
 
 def env(name: str, default: str) -> str:
     v = os.getenv(name)
@@ -355,7 +364,14 @@ async def audio_stream(websocket: WebSocket):
         websocket.query_params.get("model") or DEFAULT_MODEL,
     )
     lang = websocket.query_params.get("language") or DEFAULT_LANG
-    processor = create_stream_processor(model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang)
+    try:
+        processor = create_stream_processor(model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("stream processor init failed")
+        await _send_json(websocket, {"type": "error", "error": f"stream_init_failed: {exc}"})
+        await websocket.close()
+        return
+
     audio_duration = 0.0
     last_partial_at = 0.0
     last_partial_text = ""
@@ -408,6 +424,12 @@ async def audio_stream(websocket: WebSocket):
         )
     except WebSocketDisconnect:
         return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("stream endpoint failed")
+        try:
+            await _send_json(websocket, {"type": "error", "error": str(exc)})
+        except Exception:
+            pass
     finally:
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.close()

@@ -51,6 +51,12 @@ def write_reload_signal() -> None:
     path.write_text(str(os.getpid()), encoding="utf-8")
 
 
+def write_quit_signal() -> None:
+    path = app_data_dir() / "quit.signal"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(os.getpid()), encoding="utf-8")
+
+
 def normalize_hotkey(raw: str) -> str:
     hk = (raw or "").strip().lower().replace(" ", "")
     hk = hk.replace("windows+", "win+").replace("super+", "win+").replace("cmd+", "win+")
@@ -216,7 +222,6 @@ class SettingsApp:
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
         self.root.bind("<Control-s>", lambda _e: self.save())
-        self.root.bind("<Return>", lambda _e: self.save())
 
         # Center on screen
         self.root.update_idletasks()
@@ -314,12 +319,12 @@ class SettingsApp:
 
         ttk.Checkbutton(
             card3,
-            text="Live streaming while speaking",
+            text="Live streaming while speaking (experimental)",
             variable=self.streaming_var,
         ).pack(anchor="w", padx=14, pady=(4, 2))
         ttk.Checkbutton(
             card3,
-            text="Show revisable partials (proof as you talk)",
+            text="Show live preview overlay (final text inserts once)",
             variable=self.live_var,
         ).pack(anchor="w", padx=14, pady=2)
         ttk.Checkbutton(
@@ -388,6 +393,12 @@ class SettingsApp:
             style="Accent.TButton",
             command=self.save,
         ).pack(side=tk.RIGHT)
+        ttk.Button(
+            foot_inner,
+            text="Exit app",
+            style="Secondary.TButton",
+            command=self.request_quit,
+        ).pack(side=tk.LEFT, padx=(0, 10))
 
         self.status_var = tk.StringVar(value="Changes apply to the tray app within a second of Save.")
         ttk.Label(foot_inner, textvariable=self.status_var, style="Muted.TLabel").pack(
@@ -443,14 +454,8 @@ class SettingsApp:
             os.startfile("ms-settings:typing")  # type: ignore[attr-defined]
         except Exception:
             pass
-        messagebox.showinfo(
-            "Windows Voice Typing",
-            "Set IsVoiceTypingKeyEnabled = 0.\n\n"
-            "In the Settings window, confirm:\n"
-            "Time & language > Typing > Voice typing >\n"
-            "Voice typing launcher (Win + H) is Off.\n\n"
-            "Recommended hotkey remains Ctrl+Shift+H.",
-            parent=self.root,
+        self.status_var.set(
+            "Windows Voice Typing launcher disabled. Confirm Voice typing launcher is Off."
         )
 
     def save(self) -> None:
@@ -477,69 +482,73 @@ class SettingsApp:
 
         try:
             saved = save_config(self.cfg, self.config_path)
-            write_reload_signal()
-            # Autostart shortcut
             self._sync_autostart(self.cfg.autostart)
+            write_reload_signal()
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc), parent=self.root)
             return
 
         self.hotkey_var.set(self.cfg.hotkey)
-        self.status_var.set(f"Saved · hotkey {self.cfg.hotkey}")
-        messagebox.showinfo(
-            "Saved",
-            f"Settings saved.\n\nHotkey: {self.cfg.hotkey}\n\n"
-            f"{saved}\n\nThe tray app reloads within a second.",
-            parent=self.root,
-        )
+        self.status_var.set(f"Saved · hotkey {self.cfg.hotkey} · {saved}")
 
     def _sync_autostart(self, enabled: bool) -> None:
         if not sys.platform.startswith("win"):
             return
         try:
+            import winreg
+
+            # Remove the legacy Startup shortcut path. Creating it required a
+            # PowerShell/COM helper, which made Save feel like it was running a
+            # script. The Run key is instant, normal Windows app behavior.
             startup = Path(os.environ.get("APPDATA", "")) / (
                 r"Microsoft\Windows\Start Menu\Programs\Startup"
             )
-            startup.mkdir(parents=True, exist_ok=True)
             lnk = startup / "Whisper Toggle.lnk"
-            app = app_data_dir()
-            if not enabled:
-                if lnk.exists():
+            if lnk.exists():
+                try:
                     lnk.unlink()
-                return
+                except OSError:
+                    pass
 
-            import subprocess
-
-            target = app / "python" / "pythonw.exe"
-            script = app / "whisper-toggle-tray.pyw"
-            icon = app / "assets" / "icon.ico"
-            args = f'"{script}"'
-            if not target.exists() or not script.exists():
-                return
-
-            def ps_quote(value: Path | str) -> str:
-                return "'" + str(value).replace("'", "''") + "'"
-
-            ps = "\n".join(
-                [
-                    "$w = New-Object -ComObject WScript.Shell",
-                    f"$s = $w.CreateShortcut({ps_quote(lnk)})",
-                    f"$s.TargetPath = {ps_quote(target)}",
-                    f"$s.Arguments = {ps_quote(args)}",
-                    f"$s.WorkingDirectory = {ps_quote(app)}",
-                    f"$s.IconLocation = {ps_quote(icon)}",
-                    "$s.Description = 'Whisper Toggle'",
-                    "$s.Save()",
-                ]
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            value_name = "Whisper Toggle"
+            key = winreg.CreateKeyEx(
+                winreg.HKEY_CURRENT_USER,
+                key_path,
+                0,
+                winreg.KEY_SET_VALUE,
             )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            try:
+                if not enabled:
+                    try:
+                        winreg.DeleteValue(key, value_name)
+                    except FileNotFoundError:
+                        pass
+                    return
+
+                app = app_data_dir()
+                target = app / "python" / "pythonw.exe"
+                script = app / "whisper-toggle-tray.pyw"
+                if not target.exists() or not script.exists():
+                    return
+                command = f'"{target}" "{script}"'
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
+            finally:
+                winreg.CloseKey(key)
         except Exception:
             pass
+
+    def request_quit(self) -> None:
+        if not messagebox.askyesno(
+            "Exit Whisper Toggle",
+            "Quit the tray app and stop the local Whisper engine?",
+            parent=self.root,
+        ):
+            return
+        try:
+            write_quit_signal()
+        finally:
+            self.root.destroy()
 
     def run(self) -> None:
         self.root.mainloop()

@@ -1,6 +1,5 @@
-# Best-effort: reduce conflict between Win+H and Windows Voice Typing.
-# Whisper Toggle binds Win+H with a low-level suppress hook; this also turns off
-# the OS voice-typing startup tip where possible.
+# Optional best-effort helper for users who explicitly want Whisper Toggle on Win+H.
+# The app defaults to Ctrl+Shift+H so Windows Voice Typing remains intact.
 # Run as the interactive user (no admin required).
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -17,5 +16,5 @@ foreach ($p in $paths) {
 # Hide voice typing mic button if present
 New-ItemProperty -Path "HKCU:\Software\Microsoft\input\Settings" -Name "EnableHwkbTextPrediction" -Value 0 -PropertyType DWord -Force | Out-Null
 
-Write-Host "Whisper Toggle: Win+H is owned by the tray app while it is running."
-Write-Host "If Windows Voice Typing still appears, open Settings > Time & language > Typing > Voice typing and turn off 'Voice typing launcher'."
+Write-Host "Whisper Toggle: Windows Voice Typing launcher preference updated best-effort."
+Write-Host "Use Settings > Time & language > Typing > Voice typing to confirm 'Voice typing launcher' is Off before selecting Win+H in Whisper Toggle."

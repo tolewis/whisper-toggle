@@ -32,8 +32,8 @@ It includes embedded Python, the tray app, settings GUI, local FastAPI server, a
 ## Defaults
 
 - Hotkey: `ctrl+shift+h`
-- Insertion method: clipboard + Ctrl+V after hotkey modifiers are released
-- Streaming/live partials: off by default on Windows for reliability
+- Insertion method: clipboard + Ctrl+V for normal apps; direct Unicode SendInput for terminal windows
+- Streaming/live partials: off by default on Windows for reliability; when enabled, live text appears in a non-focus preview overlay and final text inserts once
 - Win+H: optional; enable only after disabling the Windows Voice Typing launcher
 
 ## Settings
@@ -67,7 +67,7 @@ Open from the tray menu, or directly:
 - Make sure the target app has focus before pressing the stop hotkey.
 - Avoid releasing the hotkey extremely slowly; the app waits for Ctrl/Shift/Alt/Win to come up before pasting.
 - If the focused app is elevated, Whisper Toggle may also need to run elevated.
-- Check logs for `pasted ... via SendInput ctrl+v` or paste errors.
+- Check logs for `pasted ... via SendInput ctrl+v`, `typed ... directly into terminal target`, or paste errors.
 
 ### Win+H opens Windows Voice Typing
 

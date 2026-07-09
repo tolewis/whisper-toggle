@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import sys
 import numpy as np
-import librosa
+try:
+    import librosa
+except ImportError:  # Whisper Toggle ships soundfile but not heavy librosa.
+    librosa = None
 from functools import lru_cache
 import time
 import logging
@@ -14,8 +17,19 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(10**6)
 def load_audio(fname):
-    a, _ = librosa.load(fname, sr=16000, dtype=np.float32)
-    return a
+    if librosa is not None:
+        a, _ = librosa.load(fname, sr=16000, dtype=np.float32)
+        return a
+    a, sr = sf.read(fname, dtype="float32", always_2d=False)
+    if getattr(a, "ndim", 1) > 1:
+        a = np.mean(a, axis=1)
+    if sr != 16000:
+        duration = len(a) / float(sr)
+        target_len = max(1, int(duration * 16000))
+        src = np.linspace(0.0, duration, num=len(a), endpoint=False)
+        dst = np.linspace(0.0, duration, num=target_len, endpoint=False)
+        a = np.interp(dst, src, a).astype(np.float32)
+    return np.asarray(a, dtype=np.float32)
 
 def load_audio_chunk(fname, beg, end):
     audio = load_audio(fname)

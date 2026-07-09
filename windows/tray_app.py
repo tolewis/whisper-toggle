@@ -30,6 +30,7 @@ from whisper_toggle.config import AppConfig, app_data_dir, load_config, save_con
 from whisper_toggle.controller import State
 from whisper_toggle.device import resolve_device
 from whisper_toggle.icons import tray_icon, write_app_icon
+from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
 from whisper_toggle.win_input import KeyboardAdapter, MicRecorder
@@ -70,8 +71,14 @@ class TrayApp:
         self._pcm_buffer = bytearray()
         self._partial_timer: threading.Timer | None = None
         self._partial_lock = threading.Lock()
+        self.preview = LivePreviewOverlay()
+        self._preview_stop = threading.Event()
+        self._preview_thread: threading.Thread | None = None
+        self._preview_batch_lock = threading.Lock()
+        self._preview_confirmed = ""
         self._owns_api = False
         self._reload_path = app_data_dir() / "reload.signal"
+        self._quit_path = app_data_dir() / "quit.signal"
         self._config_mtime = 0.0
         self._poll_stop = threading.Event()
 
@@ -113,7 +120,7 @@ class TrayApp:
             pystray.MenuItem("Restart engine", self._on_restart_api),
             pystray.MenuItem("Open logs", self._on_open_logs),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", self._on_quit),
+            pystray.MenuItem("Exit Whisper Toggle", self._on_quit),
         )
 
     # ── Engine ──────────────────────────────────────────────────────────
@@ -232,6 +239,7 @@ class TrayApp:
     def _start_recording(self) -> None:
         self.session.clear()
         self._pcm_buffer = bytearray()
+        self._preview_confirmed = ""
         self.live = None
         self._set_state(State.RECORDING, f"Recording... ({self.cfg.hotkey} to stop)")
 
@@ -249,14 +257,23 @@ class TrayApp:
         self._recording = True
         log.info("recording started")
 
+        if self.cfg.live_partials:
+            self._start_preview("Listening…")
+
         # Streaming is optional. Start it in the background and backfill the PCM
-        # already captured so semi-live mode does not delay recording start.
-        if self.cfg.streaming and self.cfg.live_partials:
+        # already captured so semi-live mode does not delay recording start. If
+        # the streaming stack fails, a slower batch-preview loop keeps the live
+        # proofing UI useful without touching the focused app.
+        if self.cfg.live_partials and self.cfg.streaming:
             threading.Thread(target=self._start_live_stream, daemon=True).start()
+        elif self.cfg.live_partials:
+            self._start_batch_preview_loop()
 
     def _start_live_stream(self) -> None:
         def on_err(m: str):
             log.error("stream: %s", m)
+            if self._recording and self.cfg.live_partials:
+                self._start_batch_preview_loop()
 
         stream = LiveStreamSession(
             stream_url=STREAM_URL,
@@ -298,6 +315,10 @@ class TrayApp:
             pcm = bytes(self._pcm_buffer)
 
         # Prefer live stream final; fall back to batch on any failure
+        if self.cfg.live_partials:
+            self._preview_stop.set()
+            self._update_preview("Processing…")
+
         if self.live is not None:
             try:
                 final = self.live.end()
@@ -317,12 +338,15 @@ class TrayApp:
             log.warning("stream incomplete - batch fallback")
 
         if not pcm or len(pcm) < 1000:
+            if self.cfg.live_partials:
+                self._stop_preview(delay=0.5)
             self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
             self._notify("Too short - ignored")
             return
         try:
             wav = MicRecorder().to_wav_bytes(pcm)
-            text = self.api.batch(wav)
+            with self._preview_batch_lock:
+                text = self.api.batch(wav)
             if text:
                 log.info("batch text (%d chars): %s", len(text), text[:120])
                 # Always inject via clipboard+Ctrl+V (works in PowerShell/Terminal)
@@ -344,11 +368,18 @@ class TrayApp:
                         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
                         return
                 self.session.clear()
+                if self.cfg.live_partials:
+                    self._update_preview(text)
+                    self._stop_preview(delay=1.5)
                 self._notify(text[:60])
             else:
+                if self.cfg.live_partials:
+                    self._stop_preview(delay=0.5)
                 self._notify("Nothing detected")
         except Exception as exc:  # noqa: BLE001
             log.exception("batch failed")
+            if self.cfg.live_partials:
+                self._stop_preview(delay=0.5)
             self._set_state(State.ERROR, str(exc)[:60])
             return
         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
@@ -359,10 +390,8 @@ class TrayApp:
         delay = max(0, int(self.cfg.partial_debounce_ms)) / 1000.0
 
         def apply():
-            try:
-                self.session.on_partial(text)
-            except Exception as exc:  # noqa: BLE001
-                log.error("partial type failed: %s", exc)
+            preview = self._join_preview(self._preview_confirmed, text)
+            self._update_preview(preview or "Listening…")
 
         with self._partial_lock:
             if self._partial_timer is not None:
@@ -380,10 +409,14 @@ class TrayApp:
             if self._partial_timer is not None:
                 self._partial_timer.cancel()
                 self._partial_timer = None
-        try:
-            self.session.on_confirmed(text)
-        except Exception as exc:  # noqa: BLE001
-            log.error("confirmed type failed: %s", exc)
+        text = (text or "").strip()
+        if not text:
+            return
+        if text.startswith(self._preview_confirmed):
+            self._preview_confirmed = text
+        else:
+            self._preview_confirmed = self._join_preview(self._preview_confirmed, text)
+        self._update_preview(self._preview_confirmed)
 
     def _on_final(self, text: str) -> None:
         with self._partial_lock:
@@ -393,10 +426,87 @@ class TrayApp:
         try:
             self.session.finalize(text)
             if text:
+                self._update_preview(text)
+                self._stop_preview(delay=1.5)
                 self._notify(text[:60])
+            else:
+                self._stop_preview(delay=0.5)
         except Exception as exc:  # noqa: BLE001
             log.error("final type failed: %s", exc)
+            self._stop_preview(delay=0.5)
         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
+
+    def _join_preview(self, left: str, right: str) -> str:
+        left = (left or "").strip()
+        right = (right or "").strip()
+        if not left:
+            return right
+        if not right:
+            return left
+        if right.startswith(left):
+            return right
+        if left.endswith((" ", "\n")) or right.startswith((" ", "\n")):
+            return left + right
+        return left + " " + right
+
+    def _start_preview(self, text: str = "Listening…") -> None:
+        self._preview_stop.clear()
+        self.preview.start()
+        self._update_preview(text)
+
+    def _update_preview(self, text: str) -> None:
+        try:
+            self.preview.update(text)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("preview update failed: %s", exc)
+
+    def _stop_preview(self, delay: float = 0.0) -> None:
+        self._preview_stop.set()
+
+        def stop() -> None:
+            if delay > 0:
+                time.sleep(delay)
+            try:
+                self.preview.stop()
+            except Exception:
+                pass
+
+        threading.Thread(target=stop, daemon=True).start()
+
+    def _start_batch_preview_loop(self) -> None:
+        if self._preview_thread and self._preview_thread.is_alive():
+            return
+        self._preview_thread = threading.Thread(target=self._batch_preview_loop, daemon=True)
+        self._preview_thread.start()
+
+    def _batch_preview_loop(self) -> None:
+        # A reliable, slower fallback for Windows when the streaming websocket
+        # stack fails. It updates the overlay only; final insertion still uses
+        # the normal batch result on stop.
+        interval = max(3.0, int(self.cfg.partial_debounce_ms or 0) / 1000.0)
+        min_bytes = 16000 * 2  # 1s of 16 kHz mono int16
+        last_text = ""
+        last_len = 0
+        while not self._preview_stop.wait(interval):
+            if not self._recording:
+                return
+            pcm = bytes(self._pcm_buffer)
+            if len(pcm) < min_bytes or len(pcm) == last_len:
+                continue
+            last_len = len(pcm)
+            if not self._preview_batch_lock.acquire(blocking=False):
+                continue
+            try:
+                wav = MicRecorder().to_wav_bytes(pcm)
+                text = self.api.batch(wav)
+                if text and text != last_text and self._recording:
+                    last_text = text
+                    self._update_preview(text)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("batch preview failed: %s", exc)
+                return
+            finally:
+                self._preview_batch_lock.release()
 
     # ── Hotkey ownership ────────────────────────────────────────────────
     def _set_hotkey_ownership(self, enabled: bool) -> None:
@@ -596,6 +706,15 @@ class TrayApp:
         """Pick up settings saved by the settings process."""
         while not self._poll_stop.wait(1.0):
             try:
+                if self._quit_path.exists():
+                    try:
+                        self._quit_path.unlink()
+                    except OSError:
+                        pass
+                    log.info("quit requested by settings")
+                    self._on_quit()
+                    return
+
                 cfg_path = app_data_dir() / "config.json"
                 if not cfg_path.exists():
                     continue

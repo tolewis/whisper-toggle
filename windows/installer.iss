@@ -67,19 +67,16 @@ Name: "{userdesktop}\Whisper Toggle"; \
     Comment: "Voice dictation - press Ctrl+Shift+H to talk"; \
     Tasks: desktopicon
 
-Name: "{userstartup}\Whisper Toggle"; \
-    Filename: "{app}\python\pythonw.exe"; \
-    Parameters: """{app}\whisper-toggle-tray.pyw"""; \
-    WorkingDir: "{app}"; \
-    IconFilename: "{app}\assets\icon.ico"; \
-    Tasks: autostart
+[InstallDelete]
+Type: files; Name: "{userstartup}\Whisper Toggle.lnk"
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
+    ValueType: string; ValueName: "Whisper Toggle"; \
+    ValueData: """{app}\python\pythonw.exe"" ""{app}\whisper-toggle-tray.pyw"""; \
+    Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-; Soft-disable OS voice typing conflict
-Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\disable-win-voice-typing.ps1"""; \
-    Flags: runhidden
-
 Filename: "{app}\python\pythonw.exe"; \
     Parameters: """{app}\whisper-toggle-tray.pyw"""; \
     WorkingDir: "{app}"; \

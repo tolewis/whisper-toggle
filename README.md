@@ -20,8 +20,8 @@
 
 ### Windows highlights
 - **Hotkey: Ctrl+Shift+H by default** - reliable on Windows 11; Win+H is optional after disabling the Windows voice typing launcher
-- **Reliable paste** - final text is inserted with clipboard + Ctrl+V after hotkey modifiers are released, which works in Windows Terminal/PowerShell/tmux
-- **Optional live partials** - available in Settings, but batch+paste is the safe Windows default
+- **Reliable insertion** - normal apps use clipboard + Ctrl+V; terminal windows use direct Unicode SendInput so PowerShell/Windows Terminal/tmux receive text at the prompt
+- **Optional live preview** - Settings can show a non-focus overlay while speaking; final text inserts once so terminals/editors are not churned by partial backspaces
 - **Tray icon + settings** - device, model, delays, restart engine, open logs
 - **Device auto-select** - NVIDIA CUDA when available, else CPU (Intel Iris path)
 - **One installer** - embedded Python, no terminal workflow
@@ -40,7 +40,7 @@ Tray / hotkey  ->  mic PCM  ->  local FastAPI (faster-whisper)
                      |              |
                      |              +- POST /v1/audio/transcriptions  (default batch)
                      |              +- WS   /v1/audio/stream          (optional live)
-                     +- clipboard + Ctrl+V injection at focused cursor
+                     +- focused-window insertion (clipboard paste, terminal-aware SendInput)
 ```
 
 Shared library: `whisper_toggle/` (device resolver, controller, live paste, icons).
@@ -79,6 +79,7 @@ See [docs/linux-setup.md](docs/linux-setup.md). Hotkeys Super+H / Ctrl+`.
 | Version | Date | What's new |
 |---------|------|-----------|
 | **2.0.x** | 2026-07 | Windows product: reliable Ctrl+Shift+H default, tray GUI, settings, clipboard paste injection, optional Win+H/live partials |
+| **2.0.1+** | 2026-07 | Windows terminal-aware insertion, non-blocking Settings save, live preview overlay, restored Exit app control |
 | **2.0.1** | 2026-07 | Windows hotkey/input reliability: native hotkey path, instant mic start, async toasts |
 | **2.0.0** | 2026-07 | Windows product: Win+H, live partials, tray GUI, icon, DeviceResolver, installer 2.0 |
 | **1.0** | Feb 2026 | Warm API, auto-paste, Windows + Linux foundations |
