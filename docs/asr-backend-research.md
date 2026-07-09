@@ -1,0 +1,99 @@
+# ASR backend research and selection notes
+
+Goal: find the fastest accurate local transcription backend for Whisper Toggle,
+with live partials and reliable foreground insertion. Current stack is
+`faster-whisper` + CTranslate2 behind a local FastAPI process.
+
+## Current measured baseline
+
+On jubiku with the warmed v2.0.3 API (`small.en`, CUDA, int8), a fixed 6.458s
+SAPI WAV produced:
+
+- Batch final median: ~0.484s after audio upload, WER 0.0.
+- Streaming first partial median: ~0.768s, WER 0.0 final.
+- Streaming final median: ~8.727s, i.e. slower than the audio duration because
+  the current `whisper_streaming` integration prioritizes stable confirmation
+  over ultra-low latency.
+
+Interpretation: raw warm transcription is already fast on NVIDIA. The product
+latency gap vs Windows Voice Typing is more about streaming endpointing,
+partial-commit policy, and Windows text insertion than model load/inference
+alone.
+
+## GitHub projects worth studying
+
+Snapshot gathered 2026-07-09 with `gh repo view` / `gh search repos`.
+
+| Project | Activity signal | Why it matters | Initial call |
+|---|---:|---|---|
+| `k2-fsa/sherpa-onnx` | pushed 2026-07-09, ~13k stars | True streaming/offline ASR with ONNX Runtime, websocket examples, many platforms. Zipformer/transducer models should be benchmarked for sub-second partials. | Top candidate for live dictation backend. |
+| `moonshine-ai/moonshine` | pushed 2026-07-09, ~8.6k stars | Described as very low latency speech-to-text for voice agents. Need verify Windows packaging and model/API maturity. | Top research candidate. |
+| `ggml-org/whisper.cpp` | pushed 2026-07-01, ~51k stars | Mature local Whisper inference, quantized models, C/C++ deployment, examples. May be good for CPU/iGPU and simple packaging. | Benchmark as local fallback/alternate backend. |
+| `SYSTRAN/faster-whisper` | pushed 2025-11-19, ~24k stars | Current inference stack. Easy to test model sizes/distil variants while keeping API stable. | Keep as baseline; benchmark distil models. |
+| `ufal/SimulStreaming` | pushed 2026-07-05, ~600 stars | Successor-ish research direction to `whisper_streaming`; designed for simultaneous/streaming transcription. | Study for algorithm, maybe replace current stream loop. |
+| `ufal/whisper_streaming` | pushed 2025-11-12, ~3.6k stars | Current streaming integration; good but final latency is high in our baseline. | Keep until replaced, but not the end state. |
+| `KoljaB/RealtimeSTT` | pushed 2026-06-12, ~10k stars | Python realtime STT wrapper with VAD/wake/instant transcription. Uses faster-whisper-style components and has UX ideas. | Mine for VAD/threading patterns. |
+| `collabora/WhisperLive` | pushed 2026-07-06, ~4k stars | Nearly-live Whisper server/client architecture. | Mine for server/client streaming patterns. |
+| `alphacep/vosk-api` | pushed 2026-07-02, ~15k stars | Older true streaming offline ASR. Very low latency but likely lower accuracy than Whisper-family models. | Benchmark only if speed trumps accuracy. |
+| `openai/whisper`, `m-bain/whisperX` | active but not live-first | Accuracy/reference tooling, timestamps/diarization. | Not primary for low-latency dictation. |
+
+## VibeVoice note
+
+`microsoft/VibeVoice` and most `VibeVoice-Realtime-0.5B` wrappers found on
+GitHub are text-to-speech / voice generation projects, not dictation ASR. They
+are not candidates for replacing the transcription model unless a specific ASR
+checkpoint/API is identified and verified.
+
+## Architecture direction
+
+Do not tie the product shell to any one ASR library. Keep the Windows tray,
+settings, hotkey, overlay, and insertion logic, but make the engine backend
+swappable:
+
+```text
+Tray / Controller / Insertion
+  -> Local ASR service API
+     -> backend=faster-whisper | sherpa-onnx | whisper.cpp | moonshine
+```
+
+Selection metrics:
+
+1. Cold load time.
+2. Warm model resident memory / VRAM.
+3. Time to first partial.
+4. Time from end-of-speech to final text.
+5. WER on fixed phrases and real dictation clips.
+6. Stability over 30+ repeated dictations.
+7. Windows packaging complexity.
+
+## Benchmark commands
+
+Direct model benchmark for Faster-Whisper candidates:
+
+```powershell
+python scripts\benchmark_asr_candidates.py `
+  --audio C:\src\wt-bench\wt-benchmark.wav `
+  --expected "Whisper Toggle benchmark phrase. The quick brown fox dictates into the focused window." `
+  --models tiny.en,base.en,small.en,distil-large-v3 `
+  --device cuda `
+  --compute-type int8 `
+  --runs 3 `
+  --json-out C:\src\wt-bench\asr-candidates.json
+```
+
+For a fair Windows Voice Typing vs Whisper Toggle product benchmark, use the
+routed-audio desktop harness from `docs/benchmarking.md`, but only from a path
+that can prove the benchmark window owns foreground focus. Plain SSH/Scheduled
+Task is not authoritative for global-hotkey UI measurement.
+
+## Iteration-1 conclusion
+
+The fastest near-term path is:
+
+1. Benchmark Faster-Whisper model variants immediately (same backend, no product
+   rewrite).
+2. Prototype a `sherpa-onnx` streaming backend as the first real architecture
+   challenger.
+3. Keep final paste as the reliable default, but improve live overlay/partial
+   latency; only consider focused live text mutation after the ASR backend and
+   foreground authority are proven.

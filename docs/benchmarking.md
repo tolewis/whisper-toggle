@@ -33,7 +33,24 @@ Primary metrics:
 - `stream.final_sec`: stream final latency.
 - `wer`: word error rate against the expected phrase.
 
-## 2. Desktop dictation benchmark (Windows Voice Typing vs Whisper Toggle)
+## 2. Direct candidate-model benchmark
+
+Use this before changing product architecture. It measures warmed model speed and accuracy directly, one backend/model at a time.
+
+```powershell
+python scripts\benchmark_asr_candidates.py `
+  --audio C:\Temp\wt-benchmark.wav `
+  --expected "Whisper Toggle benchmark phrase. The quick brown fox dictates into the focused window." `
+  --models tiny.en,base.en,small.en,distil-large-v3 `
+  --device cuda `
+  --compute-type int8 `
+  --runs 3 `
+  --json-out C:\Temp\asr-candidates.json
+```
+
+See `docs/asr-backend-research.md` for the backend shortlist.
+
+## 3. Desktop dictation benchmark (Windows Voice Typing vs Whisper Toggle)
 
 Windows Voice Typing (`Win+H`) is not exposed as a normal API that accepts a WAV file. A fair comparison therefore needs a real interactive Windows desktop plus controlled audio routed into the default microphone.
 
