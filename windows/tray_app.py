@@ -232,42 +232,56 @@ class TrayApp:
     def _start_recording(self) -> None:
         self.session.clear()
         self._pcm_buffer = bytearray()
-        self._set_state(State.RECORDING, f"Recording... ({self.cfg.hotkey} to stop)")
-        self._notify("Listening - speak now")
-
-        # Streaming is optional; on Windows it is flaky until the WS path is hardened.
-        # Prefer reliable batch -> clipboard paste unless user explicitly wants live partials.
-        use_stream = bool(self.cfg.streaming and self.cfg.live_partials)
         self.live = None
-        if use_stream:
-            stream_err = []
-
-            def on_err(m: str):
-                log.error("stream: %s", m)
-                stream_err.append(m)
-
-            self.live = LiveStreamSession(
-                stream_url=STREAM_URL,
-                model=self.model,
-                language="en",
-                on_partial=self._on_partial,
-                on_confirmed=self._on_confirmed,
-                on_final=self._on_final,
-                on_error=on_err,
-                open_timeout=8.0,
-            )
-            if not self.live.start():
-                log.warning("stream connect failed; will batch at stop")
-                self.live = None
+        self._set_state(State.RECORDING, f"Recording... ({self.cfg.hotkey} to stop)")
 
         def on_pcm(data: bytes):
             self._pcm_buffer.extend(data)
-            if self.live is not None and not self.live.failed:
-                self.live.send_pcm(data)
+            live = self.live
+            if live is not None and not live.failed:
+                live.send_pcm(data)
 
+        # Start the microphone before any toast or streaming setup. Windows
+        # notifications and WebSocket connects can be slow; they must never delay
+        # the first captured word.
         self.mic = MicRecorder(on_pcm=on_pcm)
         self.mic.start()
         self._recording = True
+        log.info("recording started")
+
+        # Streaming is optional. Start it in the background and backfill the PCM
+        # already captured so semi-live mode does not delay recording start.
+        if self.cfg.streaming and self.cfg.live_partials:
+            threading.Thread(target=self._start_live_stream, daemon=True).start()
+
+    def _start_live_stream(self) -> None:
+        def on_err(m: str):
+            log.error("stream: %s", m)
+
+        stream = LiveStreamSession(
+            stream_url=STREAM_URL,
+            model=self.model,
+            language="en",
+            on_partial=self._on_partial,
+            on_confirmed=self._on_confirmed,
+            on_final=self._on_final,
+            on_error=on_err,
+            open_timeout=3.0,
+        )
+        if not stream.start():
+            log.warning("stream connect failed; will batch at stop")
+            return
+        if not self._recording:
+            try:
+                stream.end()
+            except Exception:
+                pass
+            return
+        self.live = stream
+        backlog = bytes(self._pcm_buffer)
+        if backlog:
+            stream.send_pcm(backlog)
+        log.info("live stream connected")
 
     def _stop_recording(self) -> None:
         self._recording = False
@@ -570,12 +584,19 @@ class TrayApp:
             self.tray.stop()
 
     def _notify(self, msg: str) -> None:
-        if self.tray:
+        # Toast delivery on Windows can block or lag behind reality. Never let a
+        # notification delay recording, stopping, or pasting.
+        log.info("notify: %s", msg)
+        if not self.tray:
+            return
+
+        def _send():
             try:
                 self.tray.notify(msg, "Whisper Toggle")
             except Exception:
                 pass
-        log.info("notify: %s", msg)
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def _poll_config_reload(self) -> None:
         """Pick up settings saved by the settings process."""

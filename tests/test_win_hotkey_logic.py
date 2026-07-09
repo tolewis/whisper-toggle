@@ -33,3 +33,22 @@ def test_hotkey_normalization():
     ]:
         got = raw.lower().replace("windows+", "win+")
         assert got == want
+
+
+def test_native_hotkey_parse_ctrl_shift_h():
+    from whisper_toggle.win_input import NativeHotkeyHandle
+
+    mods, vk = NativeHotkeyHandle._parse("ctrl+shift+h")
+    assert mods & NativeHotkeyHandle.MOD_CONTROL
+    assert mods & NativeHotkeyHandle.MOD_SHIFT
+    assert mods & NativeHotkeyHandle.MOD_NOREPEAT
+    assert vk == ord("H")
+
+
+def test_native_hotkey_parse_win_h():
+    from whisper_toggle.win_input import NativeHotkeyHandle
+
+    mods, vk = NativeHotkeyHandle._parse("windows+h")
+    assert mods & NativeHotkeyHandle.MOD_WIN
+    assert mods & NativeHotkeyHandle.MOD_NOREPEAT
+    assert vk == ord("H")
