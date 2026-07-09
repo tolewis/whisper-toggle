@@ -152,3 +152,19 @@ sleep 0.5
 "$REPO_ROOT/linux/dictate-toggle.sh"
 
 grep -q 'key --clearmodifiers ctrl+shift+v' "$XDOTOOL_LOG"
+
+# L4: transcript privacy. The work dir must be private (0700) and the
+# transcript files must not linger after a completed run.
+work_mode="$(stat -c '%a' "$WHISPER_WORK_DIR")"
+if [[ "$work_mode" != "700" ]]; then
+    echo "FAIL: work dir mode is $work_mode, expected 700" >&2
+    exit 1
+fi
+if [[ -e "$WHISPER_WORK_DIR/final.txt" ]]; then
+    echo "FAIL: final.txt lingered after run" >&2
+    exit 1
+fi
+if [[ -e "$WHISPER_WORK_DIR/stream.jsonl" ]]; then
+    echo "FAIL: stream.jsonl lingered after run" >&2
+    exit 1
+fi

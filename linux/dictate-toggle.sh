@@ -24,7 +24,15 @@ WHISPER_STREAM_CLIENT="${WHISPER_STREAM_CLIENT:-$DEFAULT_STREAM_CLIENT}"
 # with a specific binary name (e.g. arecord) if desired.
 WHISPER_STREAM_RECORDER="${WHISPER_STREAM_RECORDER:-auto}"
 
-WORK_DIR="${WHISPER_WORK_DIR:-/tmp/dictate-toggle}"
+# Prefer the per-user runtime dir (already 0700) over world-readable /tmp for
+# transcripts. WHISPER_WORK_DIR overrides.
+if [[ -n "${WHISPER_WORK_DIR:-}" ]]; then
+    WORK_DIR="$WHISPER_WORK_DIR"
+elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    WORK_DIR="$XDG_RUNTIME_DIR/dictate-toggle"
+else
+    WORK_DIR="/tmp/dictate-toggle"
+fi
 PID_FILE="$WORK_DIR/rec.pid"
 MODE_FILE="$WORK_DIR/mode"
 CLIENT_PID_FILE="$WORK_DIR/client.pid"
@@ -61,7 +69,9 @@ cleanup_lock() {
 }
 
 cleanup_stream_files() {
-    rm -f "$PCM_FIFO" "$OSD_FIFO" "$CLIENT_PID_FILE" "$OSD_PID_FILE" "$MODE_FILE"
+    # Also removes the transcript artifacts so nothing sensitive lingers on disk.
+    rm -f "$PCM_FIFO" "$OSD_FIFO" "$CLIENT_PID_FILE" "$OSD_PID_FILE" "$MODE_FILE" \
+        "$FINAL_FILE" "$STREAM_LOG"
 }
 
 is_recording() {
@@ -434,6 +444,8 @@ stop_streaming() {
 
 main() {
     mkdir -p "$WORK_DIR"
+    # Transcripts are private; keep the work dir owner-only.
+    chmod 700 "$WORK_DIR" 2>/dev/null || true
 
     exec 9>"$LOCK_FILE"
     if ! flock -n 9; then
