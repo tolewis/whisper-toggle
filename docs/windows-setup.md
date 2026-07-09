@@ -9,7 +9,7 @@ Use the Windows installer built from `windows/build-installer.ps1`:
 ```powershell
 cd C:\src\Whisper-Toggle
 powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-# dist\WhisperToggle-Setup-2.0.3.exe
+# dist\WhisperToggle-Setup-2.0.4.exe
 ```
 
 The installer deploys to:
