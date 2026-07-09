@@ -11,16 +11,6 @@ class KeyboardPort(Protocol):
     def backspace(self, n: int) -> None: ...
 
 
-def _join(a: str, b: str) -> str:
-    if not a:
-        return b
-    if not b:
-        return a
-    if a.endswith((" ", "\n")) or b.startswith((" ", "\n", ".", ",", "!", "?", ";", ":")):
-        return a + b
-    return a + " " + b
-
-
 @dataclass
 class LiveTextSession:
     """Tracks what has been typed into the focused field.
@@ -103,9 +93,22 @@ class LiveTextSession:
             self.confirmed = self.displayed
             self.partial = ""
             return
-        if self.displayed:
-            self.keyboard.backspace(len(self.displayed))
-        self.keyboard.type_text(text)
+
+        # Prefer clipboard paste for reliability (PowerShell/Terminal/elevated apps).
+        inject = getattr(self.keyboard, "inject_text", None)
+        if callable(inject):
+            # Clear any live partials first, then paste the full final once.
+            if self.displayed:
+                try:
+                    self.keyboard.backspace(len(self.displayed))
+                except Exception:
+                    pass
+            inject(text)
+        else:
+            if self.displayed:
+                self.keyboard.backspace(len(self.displayed))
+            self.keyboard.type_text(text)
+
         self.displayed = text
         self.confirmed = text
         self.partial = ""

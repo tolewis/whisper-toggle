@@ -1,12 +1,12 @@
 """
-dictate-toggle.py — Push-to-talk voice dictation for Windows
+dictate-toggle.py - Legacy push-to-talk voice dictation for Windows
 
-Press Ctrl+` to start recording, press again to transcribe and auto-paste.
+Press Ctrl+Shift+H to start recording, press again to transcribe and auto-paste.
 Requires whisper-api running on localhost:8788.
 
 Usage:
-    python dictate-toggle.py              # Default hotkey: Ctrl+`
-    python dictate-toggle.py --hotkey "ctrl+shift+h"   # Custom hotkey
+    python dictate-toggle.py              # Default hotkey: Ctrl+Shift+H
+    python dictate-toggle.py --hotkey "f9"              # Custom hotkey
 """
 
 import sys
@@ -23,20 +23,20 @@ import numpy as np
 import requests
 import pyperclip
 
-# ── Config ──────────────────────────────────────────────────────────────────
+# -- Config -----------------------------------------------------------------
 WHISPER_API = "http://127.0.0.1:8788/v1/audio/transcriptions"
-DEFAULT_HOTKEY = "ctrl+`"
+DEFAULT_HOTKEY = "ctrl+shift+h"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 WORK_DIR = Path(tempfile.gettempdir()) / "dictate-toggle"
 
-# ── State ───────────────────────────────────────────────────────────────────
+# -- State ------------------------------------------------------------------
 _recording = False
 _stream = None
 _audio_chunks: list[np.ndarray] = []
 _rec_lock = threading.Lock()
 
-# ── Notifications ───────────────────────────────────────────────────────────
+# -- Notifications ----------------------------------------------------------
 _notifier = None
 
 
@@ -66,13 +66,13 @@ def notify(msg, title="Dictation"):
         pass
 
 
-# ── Audio callback ──────────────────────────────────────────────────────────
+# -- Audio callback ---------------------------------------------------------
 def _audio_callback(indata, frames, time_info, status):
     """Append each audio chunk from sounddevice."""
     _audio_chunks.append(indata.copy())
 
 
-# ── Recording control ──────────────────────────────────────────────────────
+# -- Recording control ------------------------------------------------------
 def _start_recording():
     global _recording, _stream, _audio_chunks
     _audio_chunks = []
@@ -104,7 +104,7 @@ def _stop_recording() -> np.ndarray | None:
     return np.concatenate(_audio_chunks, axis=0)
 
 
-# ── Transcription + paste ──────────────────────────────────────────────────
+# -- Transcription + paste --------------------------------------------------
 def _transcribe_and_paste(audio_data: np.ndarray):
     """Save WAV, POST to API, copy to clipboard, simulate Ctrl+V."""
     notify("Processing...")
@@ -116,7 +116,7 @@ def _transcribe_and_paste(audio_data: np.ndarray):
     try:
         # Skip tiny files
         if wav_path.stat().st_size < 1000:
-            notify("Recording too short — ignored")
+            notify("Recording too short - ignored")
             return
 
         # POST to warm API
@@ -147,7 +147,7 @@ def _transcribe_and_paste(audio_data: np.ndarray):
         notify(f"{preview}  ({len(text)} chars)")
 
     except requests.exceptions.ConnectionError:
-        notify("API not running — start whisper-api first")
+        notify("API not running - start whisper-api first")
     except Exception as e:
         notify(f"Error: {e}")
     finally:
@@ -157,9 +157,9 @@ def _transcribe_and_paste(audio_data: np.ndarray):
             pass
 
 
-# ── Toggle handler ──────────────────────────────────────────────────────────
+# -- Toggle handler ---------------------------------------------------------
 def toggle():
-    """Hotkey callback — start recording or stop + transcribe."""
+    """Hotkey callback - start recording or stop + transcribe."""
     if not _rec_lock.acquire(blocking=False):
         return  # Already processing a toggle
 
@@ -184,8 +184,10 @@ def toggle():
                 pass
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# -- Main -------------------------------------------------------------------
 def main():
+    global WHISPER_API
+
     parser = argparse.ArgumentParser(description="Voice dictation toggle")
     parser.add_argument(
         "--hotkey",
@@ -199,7 +201,6 @@ def main():
     )
     args = parser.parse_args()
 
-    global WHISPER_API
     WHISPER_API = args.api
 
     _init_notifier()
@@ -211,7 +212,7 @@ def main():
         if r.status_code == 200:
             print(f"  API: connected ({args.api})")
         else:
-            print(f"  API: responded but HTTP {r.status_code} — may not work")
+            print(f"  API: responded but HTTP {r.status_code} - may not work")
     except requests.exceptions.ConnectionError:
         print(f"  API: NOT reachable at {args.api}")
         print(f"       Start the API first: start-api.bat")

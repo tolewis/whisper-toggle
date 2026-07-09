@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Whisper Toggle settings — Win11-styled, resizable, always-visible Save footer.
+"""Whisper Toggle settings - Win11-styled, resizable, always-visible Save footer.
 
 Runs as its own process (Tk needs a real main thread).
 """
@@ -367,7 +367,7 @@ class SettingsApp:
         # spacer so last card isn't tight against footer when scrolled
         ttk.Frame(body, style="TFrame").pack(fill=tk.X, pady=8)
 
-        # Footer — always visible
+        # Footer - always visible
         footer_border = tk.Frame(self.root, bg=BORDER, height=1)
         footer_border.pack(fill=tk.X, side=tk.BOTTOM)
         footer = ttk.Frame(self.root, style="Footer.TFrame")
@@ -500,33 +500,43 @@ class SettingsApp:
             startup = Path(os.environ.get("APPDATA", "")) / (
                 r"Microsoft\Windows\Start Menu\Programs\Startup"
             )
+            startup.mkdir(parents=True, exist_ok=True)
             lnk = startup / "Whisper Toggle.lnk"
             app = app_data_dir()
             if not enabled:
                 if lnk.exists():
                     lnk.unlink()
                 return
-            # Create/update shortcut via WScript
+
             import subprocess
 
             target = app / "python" / "pythonw.exe"
             script = app / "whisper-toggle-tray.pyw"
+            icon = app / "assets" / "icon.ico"
+            args = f'"{script}"'
             if not target.exists() or not script.exists():
                 return
-            ps = f"""
-$w = New-Object -ComObject WScript.Shell
-$s = $w.CreateShortcut(r'{lnk}')
-$s.TargetPath = r'{target}'
-$s.Arguments = '\"{script}\"'
-$s.WorkingDirectory = r'{app}'
-$s.IconLocation = r'{app / "assets" / "icon.ico"}'
-$s.Description = 'Whisper Toggle'
-$s.Save()
-"""
+
+            def ps_quote(value: Path | str) -> str:
+                return "'" + str(value).replace("'", "''") + "'"
+
+            ps = "\n".join(
+                [
+                    "$w = New-Object -ComObject WScript.Shell",
+                    f"$s = $w.CreateShortcut({ps_quote(lnk)})",
+                    f"$s.TargetPath = {ps_quote(target)}",
+                    f"$s.Arguments = {ps_quote(args)}",
+                    f"$s.WorkingDirectory = {ps_quote(app)}",
+                    f"$s.IconLocation = {ps_quote(icon)}",
+                    "$s.Description = 'Whisper Toggle'",
+                    "$s.Save()",
+                ]
+            )
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps],
                 check=False,
                 capture_output=True,
+                text=True,
             )
         except Exception:
             pass

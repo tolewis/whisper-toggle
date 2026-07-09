@@ -1,44 +1,165 @@
-"""Windows keyboard + mic adapters.
-
-Importing this module on non-Windows is OK for typing tests, but the
-runtime methods require the `keyboard` / `sounddevice` packages.
-"""
+"""Windows keyboard + mic adapters."""
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable, Optional
 
 import numpy as np
 
+log = logging.getLogger("whisper-toggle.tray")
+
 
 class KeyboardAdapter:
-    """Type and backspace via the `keyboard` package (Windows primary)."""
+    """Hotkeys + reliable text injection at the focused cursor."""
 
     def __init__(self):
-        import keyboard  # noqa: F401
+        import keyboard
 
         self._keyboard = keyboard
 
     def type_text(self, text: str) -> None:
+        """Character typing - used for live partials only. Prefer inject_text for finals."""
         if not text:
             return
-        # keyboard.write handles unicode better than send for plain text
-        self._keyboard.write(text, delay=0)
+        try:
+            self._wait_modifiers_up()
+            self._keyboard.write(text, delay=0)
+        except Exception as exc:  # noqa: BLE001
+            log.error("type_text failed: %s", exc)
+            raise
 
     def backspace(self, n: int) -> None:
         if n <= 0:
             return
-        for _ in range(n):
-            self._keyboard.send("backspace")
+        try:
+            self._wait_modifiers_up()
+            for _ in range(n):
+                self._keyboard.send("backspace")
+        except Exception as exc:  # noqa: BLE001
+            log.error("backspace failed: %s", exc)
 
     def send_paste(self) -> None:
+        self._wait_modifiers_up()
         time.sleep(0.05)
         self._keyboard.send("ctrl+v")
 
+    def inject_text(self, text: str, restore_clipboard: bool = True) -> None:
+        """Most reliable path: clipboard + Ctrl+V after hotkey keys are released.
+
+        This is how most Windows dictation tools insert text and works in
+        PowerShell, Windows Terminal, Notepad, browsers, etc.
+        """
+        if not text:
+            return
+        import pyperclip
+
+        self._wait_modifiers_up()
+        previous = None
+        if restore_clipboard:
+            try:
+                previous = pyperclip.paste()
+            except Exception:
+                previous = None
+
+        try:
+            pyperclip.copy(text)
+        except Exception as exc:  # noqa: BLE001
+            log.error("clipboard copy failed: %s - falling back to write()", exc)
+            self.type_text(text)
+            return
+
+        time.sleep(0.10)
+        pasted = False
+        try:
+            self._send_ctrl_v_sendinput()
+            pasted = True
+            log.info("pasted %d chars via SendInput ctrl+v", len(text))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SendInput paste failed: %s", exc)
+
+        if not pasted:
+            try:
+                self._keyboard.send("ctrl+v")
+                pasted = True
+                log.info("pasted %d chars via keyboard ctrl+v", len(text))
+            except Exception as exc:  # noqa: BLE001
+                log.error("keyboard ctrl+v failed: %s", exc)
+
+        if not pasted:
+            try:
+                self.type_text(text)
+                log.info("injected %d chars via write()", len(text))
+            except Exception:
+                log.exception("all inject methods failed")
+                raise
+
+        if restore_clipboard and previous is not None:
+            # Restore previous clipboard after a beat so paste can complete
+            def _restore():
+                time.sleep(0.4)
+                try:
+                    pyperclip.copy(previous)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_restore, daemon=True).start()
+
+    def _send_ctrl_v_sendinput(self) -> None:
+        """Low-level Ctrl+V independent of the keyboard hook stack."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        input_keyboard = 1
+        keyeventf_keyup = 0x0002
+        vk_control = 0x11
+        vk_v = 0x56
+
+        class KeyBdInput(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        class InputUnion(ctypes.Union):
+            _fields_ = [("ki", KeyBdInput)]
+
+        class Input(ctypes.Structure):
+            _anonymous_ = ("i",)
+            _fields_ = [("type", wintypes.DWORD), ("i", InputUnion)]
+
+        def key(vk: int, *, up: bool = False) -> None:
+            event = Input(type=input_keyboard)
+            event.ki = KeyBdInput(vk, 0, keyeventf_keyup if up else 0, 0, None)
+            sent = user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(Input))
+            if sent != 1:
+                raise ctypes.WinError(ctypes.get_last_error())
+
+        key(vk_control)
+        key(vk_v)
+        key(vk_v, up=True)
+        key(vk_control, up=True)
+
+    def _wait_modifiers_up(self, timeout: float = 1.0) -> None:
+        """Do not inject while Ctrl/Shift/Alt/Win from the hotkey are still down."""
+        keys = ("ctrl", "shift", "alt", "left windows", "right windows", "windows")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if not any(self._keyboard.is_pressed(k) for k in keys):
+                    return
+            except Exception:
+                return
+            time.sleep(0.02)
+        log.warning("modifiers still down after wait - injecting anyway")
+
     def add_hotkey(self, hotkey: str, callback: Callable, suppress: bool = True):
-        # Normalize win/windows alias
         hk = hotkey.strip().lower().replace("windows+", "win+")
         return self._keyboard.add_hotkey(hk, callback, suppress=suppress)
 

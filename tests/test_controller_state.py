@@ -147,6 +147,10 @@ def test_live_partials_emitted_before_final():
     assert typer.current == "hello world"
 
 
+def test_controller_default_is_reliable_batch_mode():
+    assert ControllerConfig().streaming is False
+
+
 def test_batch_path_when_streaming_disabled():
     ctl, api, _, typer = make_controller(streaming=False)
     ctl.toggle()

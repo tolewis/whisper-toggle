@@ -19,13 +19,14 @@ class AppConfig:
     hotkey: str = DEFAULT_HOTKEY
     device_override: str = "auto"
     model: str = ""  # empty = DeviceResolver default for device
-    streaming: bool = True
+    # Batch+clipboard is the reliable Windows default (matches OS voice typing paste model).
+    streaming: bool = False
     autostart: bool = True
     partial_debounce_ms: int = 400
     hardware_catchup_ms: int = 250
     version: str = CONFIG_VERSION
-    # Live typing: type confirmed immediately; debounce partial revisions
-    live_partials: bool = True
+    # Live partials require streaming; off by default until WS is stable on Windows.
+    live_partials: bool = False
     suppress_hotkey: bool = True  # capture Win+H so OS voice typing does not fire
 
 

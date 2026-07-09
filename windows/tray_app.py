@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Whisper Toggle v2 — Windows tray product.
+"""Whisper Toggle v2 - Windows tray product.
 
 - Win+H owned elegantly only while engine is ready; OS voice typing restored otherwise
 - Live streaming partials with batch fallback if stream fails
@@ -63,6 +63,7 @@ class TrayApp:
         self.status_text = "Starting..."
         self.tray: pystray.Icon | None = None
         self._hotkey_handle = None
+        self._backup_hotkey_handle = None
         self._win_owner = None
         self._toggle_lock = threading.Lock()
         self._recording = False
@@ -88,7 +89,7 @@ class TrayApp:
         if self.tray:
             try:
                 self.tray.icon = tray_icon(state.value)
-                self.tray.title = f"Whisper Toggle — {message}"
+                self.tray.title = f"Whisper Toggle - {message}"
                 # Keep icon marked visible (Win11 overflow still may hide it)
                 self.tray.visible = True
             except Exception as exc:  # noqa: BLE001
@@ -231,10 +232,12 @@ class TrayApp:
     def _start_recording(self) -> None:
         self.session.clear()
         self._pcm_buffer = bytearray()
-        self._set_state(State.RECORDING, "Recording... (Win+H to stop)")
-        self._notify("Listening — speak now")
+        self._set_state(State.RECORDING, f"Recording... ({self.cfg.hotkey} to stop)")
+        self._notify("Listening - speak now")
 
-        use_stream = self.cfg.streaming and self.cfg.live_partials
+        # Streaming is optional; on Windows it is flaky until the WS path is hardened.
+        # Prefer reliable batch -> clipboard paste unless user explicitly wants live partials.
+        use_stream = bool(self.cfg.streaming and self.cfg.live_partials)
         self.live = None
         if use_stream:
             stream_err = []
@@ -297,24 +300,36 @@ class TrayApp:
             if not failed and self.state == State.IDLE:
                 # final callback already set idle
                 return
-            log.warning("stream incomplete — batch fallback")
+            log.warning("stream incomplete - batch fallback")
 
         if not pcm or len(pcm) < 1000:
             self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
-            self._notify("Too short — ignored")
+            self._notify("Too short - ignored")
             return
         try:
             wav = MicRecorder().to_wav_bytes(pcm)
             text = self.api.batch(wav)
             if text:
-                # Replace any partial live text with clean final
+                log.info("batch text (%d chars): %s", len(text), text[:120])
+                # Always inject via clipboard+Ctrl+V (works in PowerShell/Terminal)
                 try:
-                    self.session.finalize(text)
+                    self.kb.inject_text(text)
                 except Exception:
-                    import pyperclip
+                    log.exception("inject_text failed; trying session.finalize")
+                    try:
+                        self.session.finalize(text)
+                    except Exception:
+                        log.exception("finalize also failed")
+                        self._notify("Transcribed but paste failed - text on clipboard")
+                        try:
+                            import pyperclip
 
-                    pyperclip.copy(text)
-                    self.kb.send_paste()
+                            pyperclip.copy(text)
+                        except Exception:
+                            pass
+                        self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
+                        return
+                self.session.clear()
                 self._notify(text[:60])
             else:
                 self._notify("Nothing detected")
@@ -381,6 +396,24 @@ class TrayApp:
         hk = (self.cfg.hotkey or "").lower().replace("windows+", "win+").replace(" ", "")
         return hk == "win+h"
 
+    def _ensure_backup_hotkey(self) -> None:
+        """Keep Ctrl+Shift+H available whenever the primary hotkey is different."""
+        if (self.cfg.hotkey or "").lower() == "ctrl+shift+h":
+            if self._backup_hotkey_handle is not None:
+                try:
+                    self.kb.remove_hotkey(self._backup_hotkey_handle)
+                except Exception:
+                    pass
+                self._backup_hotkey_handle = None
+            return
+        if self._backup_hotkey_handle is not None:
+            return
+        try:
+            self._backup_hotkey_handle = self.kb.add_hotkey("ctrl+shift+h", self.toggle, suppress=True)
+            log.info("backup hotkey bound: ctrl+shift+h")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("backup hotkey failed: %s", exc)
+
     def _bind_hotkey(self) -> None:
         # Tear down previous
         if self._hotkey_handle is not None:
@@ -389,6 +422,12 @@ class TrayApp:
             except Exception:
                 pass
             self._hotkey_handle = None
+        if self._backup_hotkey_handle is not None:
+            try:
+                self.kb.remove_hotkey(self._backup_hotkey_handle)
+            except Exception:
+                pass
+            self._backup_hotkey_handle = None
         if self._win_owner is not None:
             try:
                 self._win_owner.stop()
@@ -396,7 +435,7 @@ class TrayApp:
                 pass
             self._win_owner = None
 
-        hk = (self.cfg.hotkey or "win+h").lower().replace("windows+", "win+")
+        hk = (self.cfg.hotkey or "ctrl+shift+h").lower().replace("windows+", "win+")
         self.cfg.hotkey = hk
 
         if self._is_win_hotkey():
@@ -408,6 +447,7 @@ class TrayApp:
                     # Enable only when ready
                     self._set_hotkey_ownership(self.state == State.IDLE and self.api.is_healthy())
                     log.info("Win+H native ownership hook ready")
+                    self._ensure_backup_hotkey()
                     return
                 log.error("Win+H native hook failed to start")
             except Exception as exc:  # noqa: BLE001
@@ -417,6 +457,7 @@ class TrayApp:
             try:
                 self._hotkey_handle = self.kb.add_hotkey("win+h", self.toggle, suppress=True)
                 log.warning("using keyboard-lib win+h fallback (OS may still open voice typing)")
+                self._ensure_backup_hotkey()
                 return
             except Exception as exc:  # noqa: BLE001
                 log.error("win+h fallback failed: %s", exc)
@@ -426,8 +467,8 @@ class TrayApp:
                 self._hotkey_handle = self.kb.add_hotkey("ctrl+shift+h", self.toggle, suppress=True)
                 self.cfg.hotkey = "ctrl+shift+h"
                 save_config(self.cfg)
-                self._set_state(State.IDLE, "Ready (ctrl+shift+h) — Win+H unavailable")
-                self._notify("Win+H busy — using Ctrl+Shift+H")
+                self._set_state(State.IDLE, "Ready (ctrl+shift+h) - Win+H unavailable")
+                self._notify("Win+H busy - using Ctrl+Shift+H")
             except Exception as exc2:  # noqa: BLE001
                 self._set_state(State.ERROR, f"Hotkey failed: {exc2}")
             return
@@ -438,13 +479,14 @@ class TrayApp:
                 hk, self.toggle, suppress=bool(self.cfg.suppress_hotkey)
             )
             log.info("hotkey bound: %s", hk)
+            self._ensure_backup_hotkey()
         except Exception as exc:  # noqa: BLE001
             log.error("hotkey bind failed for %s: %s", hk, exc)
             self._set_state(State.ERROR, f"Hotkey failed: {exc}")
 
     # ── Menu actions ────────────────────────────────────────────────────
     def _on_settings(self, icon=None, item=None):
-        """Launch settings as a separate process — Tk is not thread-safe."""
+        """Launch settings as a separate process - Tk is not thread-safe."""
         try:
             from whisper_toggle.config import default_config_path
 
@@ -512,6 +554,13 @@ class TrayApp:
                 self._win_owner.stop()
             except Exception:
                 pass
+            self._win_owner = None
+        if self._backup_hotkey_handle is not None:
+            try:
+                self.kb.remove_hotkey(self._backup_hotkey_handle)
+            except Exception:
+                pass
+            self._backup_hotkey_handle = None
         try:
             self.kb.unhook_all()
         except Exception:
@@ -562,13 +611,8 @@ class TrayApp:
             pass
         ok = self.start_api()
         self._bind_hotkey()
-        # Always also bind a reliable backup hotkey so user is never stuck
-        try:
-            if (self.cfg.hotkey or "").lower() != "ctrl+shift+h":
-                self.kb.add_hotkey("ctrl+shift+h", self.toggle, suppress=True)
-                log.info("backup hotkey bound: ctrl+shift+h")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("backup hotkey failed: %s", exc)
+        # Always keep a reliable backup hotkey so the user is never stuck.
+        self._ensure_backup_hotkey()
         threading.Thread(target=self._poll_config_reload, daemon=True).start()
         if ok:
             self._notify(
@@ -584,7 +628,7 @@ class TrayApp:
         self.tray = pystray.Icon(
             "whisper-toggle",
             image,
-            "Whisper Toggle — Starting...",
+            "Whisper Toggle - Starting...",
             self._menu(),
         )
         self.tray.run(setup=self._startup)

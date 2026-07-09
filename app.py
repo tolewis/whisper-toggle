@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Whisper API (OpenAI-compatible) — local, self-hosted.
+"""Whisper API (OpenAI-compatible) - local, self-hosted.
 
 Implements:
   POST /v1/audio/transcriptions
@@ -335,6 +335,11 @@ def transcriptions(
             "task": "transcribe",
         }
     finally:
+        try:
+            if not tmp.file.closed:
+                tmp.close()
+        except Exception:
+            pass
         try:
             os.unlink(tmp_path)
         except OSError:

@@ -1,12 +1,14 @@
 Whisper Toggle 2.0
 
-Talk to your computer. It types for you — live, private, local.
+Talk to your computer. It types for you - private, local, and reliable.
 
 After install:
-  • A mic icon appears in the system tray
-  • Press Win+H to start dictation (overrides Windows voice typing while running)
-  • Speak — text appears as you talk (with a short delay so the mic/GPU catch up)
-  • Press Win+H again to finish
+  - A mic icon appears in the system tray
+  - Press Ctrl+Shift+H to start dictation
+  - Speak naturally; local Whisper transcribes on this PC
+  - Press Ctrl+Shift+H again to paste final text at the focused cursor
+
+Win+H and live partials are available in Settings, but Ctrl+Shift+H + batch paste is the reliable Windows 11 default.
 
 Works on NVIDIA GPUs (CUDA) and falls back to CPU on Intel Iris (e.g. unhook laptop).
 

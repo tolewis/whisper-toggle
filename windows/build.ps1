@@ -1,4 +1,4 @@
-# build.ps1 — Build dictate-toggle.exe with PyInstaller
+# build.ps1 - Legacy PyInstaller build for the old console dictation helper
 # Run from the repo root: powershell -ExecutionPolicy Bypass -File windows\build.ps1
 #
 # Prerequisites:
@@ -49,7 +49,7 @@ pyinstaller `
     --onefile `
     --name "dictate-toggle" `
     --console `
-    --icon "$RepoRoot\windows\icon.ico" `
+    --icon "$RepoRoot\assets\icon.ico" `
     --noconfirm `
     --clean `
     --hidden-import "winotify" `

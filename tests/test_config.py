@@ -14,13 +14,14 @@ def test_default_config_roundtrip(tmp_path: Path):
     loaded = load_config(path)
     assert loaded.hotkey == cfg.hotkey
     assert loaded.device_override == "auto"
-    assert loaded.streaming is True
+    assert loaded.streaming is False
+    assert loaded.live_partials is False
     assert loaded.version == "2.0.0"
 
 
 def test_hotkey_validation():
     cfg = default_config()
-    assert cfg.hotkey.lower().replace(" ", "") in ("win+h", "windows+h")
+    assert cfg.hotkey.lower().replace(" ", "") == "ctrl+shift+h"
     cfg2 = AppConfig(
         hotkey="ctrl+shift+h",
         device_override="cpu",
@@ -36,5 +37,5 @@ def test_hotkey_validation():
 
 def test_load_missing_returns_defaults(tmp_path: Path):
     cfg = load_config(tmp_path / "missing.json")
-    assert cfg.hotkey in ("win+h", "windows+h")
-    assert cfg.streaming is True
+    assert cfg.hotkey == "ctrl+shift+h"
+    assert cfg.streaming is False

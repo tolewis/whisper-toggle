@@ -1,77 +1,60 @@
-# install.ps1 -- Set up Whisper Toggle on Windows
-# Run: powershell -ExecutionPolicy Bypass -File install.ps1
+# install.ps1 -- Developer install for Whisper Toggle on Windows
+# Preferred end-user path: build/run windows\build-installer.ps1 and use the Inno installer.
+# Run from repo root or windows dir:
+#   powershell -ExecutionPolicy Bypass -File windows\install.ps1
 
 $ErrorActionPreference = "Stop"
 
-$VenvPath = "$env:LOCALAPPDATA\whisper-venv"
-$AppDir = "$env:LOCALAPPDATA\whisper-toggle"
+$VenvPath = "$env:LOCALAPPDATA\Whisper Toggle\venv"
+$AppDir = "$env:LOCALAPPDATA\Whisper Toggle"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host ""
-Write-Host "=== Whisper Toggle -- Windows Installer ===" -ForegroundColor Cyan
+Write-Host "=== Whisper Toggle -- Developer Install ===" -ForegroundColor Cyan
 Write-Host ""
 
-# -- Check Python --
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
-    Write-Host "ERROR: Python not found. Install Python 3.9+ from python.org" -ForegroundColor Red
+    Write-Host "ERROR: Python not found. Install Python 3.11+ from python.org" -ForegroundColor Red
     exit 1
 }
-$pyVer = python --version 2>&1
-Write-Host "  Python: $pyVer"
 
-# -- Create venv --
+Write-Host "Python: $(python --version 2>&1)"
+
 if (Test-Path "$VenvPath\Scripts\python.exe") {
-    Write-Host "  Venv: already exists at $VenvPath"
+    Write-Host "Venv: already exists at $VenvPath" -ForegroundColor Green
 } else {
-    Write-Host "  Creating venv at $VenvPath ..."
+    Write-Host "Creating venv at $VenvPath ..." -ForegroundColor Yellow
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $VenvPath) | Out-Null
     python -m venv $VenvPath
 }
 
-$pip = "$VenvPath\Scripts\pip"
-$vpython = "$VenvPath\Scripts\python"
+$pip = "$VenvPath\Scripts\pip.exe"
+$vpython = "$VenvPath\Scripts\python.exe"
+$vpythonw = "$VenvPath\Scripts\pythonw.exe"
 
-# -- Install API dependencies --
-Write-Host ""
-Write-Host "Installing API dependencies..." -ForegroundColor Yellow
-& $pip install --quiet faster-whisper fastapi uvicorn
-
-# -- Install CUDA PyTorch (if NVIDIA GPU present) --
-$nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
-if ($nvidiaSmi) {
-    Write-Host "  NVIDIA GPU detected -- installing CUDA PyTorch..."
-    & $pip install --quiet torch --index-url https://download.pytorch.org/whl/cu121
-} else {
-    Write-Host "  No NVIDIA GPU detected -- using CPU mode"
-    Write-Host "  (Set WHISPER_API_DEVICE=cpu in start-api.bat)"
-}
-
-# -- Install dictation dependencies --
-Write-Host ""
-Write-Host "Installing dictation dependencies..." -ForegroundColor Yellow
+Write-Host "Installing runtime dependencies..." -ForegroundColor Yellow
+& $vpython -m pip install --upgrade pip --quiet
+& $pip install --quiet -r "$RepoRoot\requirements.txt"
 & $pip install --quiet -r "$RepoRoot\windows\requirements.txt"
 
-# -- Deploy files --
-Write-Host ""
-Write-Host "Deploying to $AppDir ..." -ForegroundColor Yellow
+Write-Host "Deploying app files to $AppDir ..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-
 Copy-Item "$RepoRoot\app.py" "$AppDir\" -Force
-Copy-Item "$RepoRoot\windows\dictate-toggle.py" "$AppDir\" -Force
-Copy-Item "$RepoRoot\windows\start-api.bat" "$AppDir\" -Force
+Copy-Item "$RepoRoot\windows\whisper-toggle-tray.pyw" "$AppDir\" -Force
+Copy-Item "$RepoRoot\windows\tray_app.py" "$AppDir\" -Force
+Copy-Item "$RepoRoot\windows\settings_gui.py" "$AppDir\" -Force
+Copy-Item "$RepoRoot\windows\disable-win-voice-typing.ps1" "$AppDir\" -Force
+Copy-Item "$RepoRoot\whisper_toggle" "$AppDir\whisper_toggle" -Recurse -Force
+Copy-Item "$RepoRoot\assets" "$AppDir\assets" -Recurse -Force
+if (Test-Path "$RepoRoot\vendor\whisper_streaming") {
+    New-Item -ItemType Directory -Force -Path "$AppDir\vendor" | Out-Null
+    Copy-Item "$RepoRoot\vendor\whisper_streaming" "$AppDir\vendor\whisper_streaming" -Recurse -Force
+}
 
-# -- Summary --
 Write-Host ""
 Write-Host "=== Installation complete ===" -ForegroundColor Green
-Write-Host ""
 Write-Host "Files installed to: $AppDir"
-Write-Host ""
-Write-Host "Step 1 -- Start the API server (keep this terminal open):"
-Write-Host "  cd $AppDir" -ForegroundColor White
-Write-Host "  .\start-api.bat" -ForegroundColor White
-Write-Host ""
-Write-Host "Step 2 -- Start dictation (in a second terminal):"
-Write-Host "  & '$vpython' '$AppDir\dictate-toggle.py'" -ForegroundColor White
-Write-Host ""
-Write-Host "Step 3 -- Press Ctrl+backtick to toggle recording"
-Write-Host ""
+Write-Host "Launch tray app:" -ForegroundColor White
+Write-Host "  & '$vpythonw' '$AppDir\whisper-toggle-tray.pyw'"
+Write-Host "Default hotkey: Ctrl+Shift+H"

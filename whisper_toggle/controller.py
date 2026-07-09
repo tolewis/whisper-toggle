@@ -42,8 +42,8 @@ class TyperPort(Protocol):
 
 @dataclass
 class ControllerConfig:
-    streaming: bool = True
-    min_audio_bytes: int = 1000  # ~30ms of int16 mono is tiny; 1000B ≈ 31ms
+    streaming: bool = False
+    min_audio_bytes: int = 1000  # ~30ms of int16 mono is tiny; 1000B ~= 31ms
     partial_debounce_ms: int = 400
     hardware_catchup_ms: int = 250
 
@@ -108,7 +108,7 @@ class Controller:
             time.sleep(catchup)
         pcm = self.audio.stop()
         if not pcm or len(pcm) < self.config.min_audio_bytes:
-            self._set_state(State.IDLE, "Too short — ignored")
+            self._set_state(State.IDLE, "Too short - ignored")
             return
 
         self._set_state(State.PROCESSING, "Processing...")
@@ -125,7 +125,7 @@ class Controller:
         finally:
             if self.state == State.PROCESSING:
                 self._set_state(State.IDLE, "Ready")
-            # Re-acquire only if still owned by us — toggle() finally also releases.
+            # Re-acquire only if still owned by us - toggle() finally also releases.
             # We already released above; ensure finally of toggle doesn't double-release.
             self._lock.acquire(blocking=False)
 

@@ -1,4 +1,4 @@
-; installer.iss — Inno Setup script for Whisper Toggle v2.0
+; installer.iss - Inno Setup script for Whisper Toggle v2.0
 ;
 ; Build:
 ;   1. powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
@@ -54,7 +54,7 @@ Name: "{group}\Whisper Toggle"; \
     Parameters: """{app}\whisper-toggle-tray.pyw"""; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\assets\icon.ico"; \
-    Comment: "Voice dictation — press Win+H to talk"
+    Comment: "Voice dictation - press Ctrl+Shift+H to talk"
 
 Name: "{group}\Uninstall Whisper Toggle"; \
     Filename: "{uninstallexe}"
@@ -64,7 +64,7 @@ Name: "{userdesktop}\Whisper Toggle"; \
     Parameters: """{app}\whisper-toggle-tray.pyw"""; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\assets\icon.ico"; \
-    Comment: "Voice dictation — press Win+H to talk"; \
+    Comment: "Voice dictation - press Ctrl+Shift+H to talk"; \
     Tasks: desktopicon
 
 Name: "{userstartup}\Whisper Toggle"; \

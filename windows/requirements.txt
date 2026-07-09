@@ -1,4 +1,5 @@
-# Windows tray + dictation runtime
+# Windows tray + local API runtime
+-r ../requirements.txt
 keyboard
 sounddevice
 soundfile
