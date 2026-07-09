@@ -57,17 +57,30 @@ if (Test-Path "$PythonDir\python.exe") {
 # -- Step 2: deps --
 Write-Host ""
 Write-Host "  [2/5] Installing dependencies..." -ForegroundColor Yellow
-& "$PythonDir\python.exe" -m pip install --upgrade pip --quiet 2>$null
+# pip prints progress/notes to stderr; under $ErrorActionPreference='Stop' that
+# is otherwise treated as a terminating error and aborts the build. Drop to
+# Continue for this block, silence the scripts-on-PATH warning, and gate on the
+# real exit code instead.
+$py = "$PythonDir\python.exe"
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+function Invoke-Pip {
+    param([string[]]$Packages)
+    & $py -m pip install --no-warn-script-location --quiet @Packages 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        $script:ErrorActionPreference = $prevEAP
+        throw "pip install failed ($LASTEXITCODE): $($Packages -join ' ')"
+    }
+}
+& $py -m pip install --upgrade pip --no-warn-script-location --quiet 2>&1 | Out-Host
 Write-Host "    API: faster-whisper, fastapi, uvicorn, websockets, numpy"
-& "$PythonDir\python.exe" -m pip install --quiet `
-    "faster-whisper==1.2.1" "ctranslate2==4.7.1" "fastapi==0.131.0" "uvicorn[standard]==0.41.0" `
-    "python-multipart>=0.0.20" "numpy>=1.26" "websockets>=15.0" "httpx>=0.27"
+Invoke-Pip @("faster-whisper==1.2.1", "ctranslate2==4.7.1", "fastapi==0.131.0", "uvicorn[standard]==0.41.0",
+             "python-multipart>=0.0.20", "numpy>=1.26", "websockets>=15.0", "httpx>=0.27")
 Write-Host "    CUDA 12 runtime: cuBLAS + cudart (for CTranslate2 GPU inference)"
-& "$PythonDir\python.exe" -m pip install --quiet `
-    "nvidia-cublas-cu12==12.9.1.4" "nvidia-cuda-runtime-cu12==12.9.79"
+Invoke-Pip @("nvidia-cublas-cu12==12.9.1.4", "nvidia-cuda-runtime-cu12==12.9.79")
 Write-Host "    Tray: keyboard, sounddevice, pystray, Pillow, ..."
-& "$PythonDir\python.exe" -m pip install --quiet `
-    keyboard sounddevice soundfile numpy requests pyperclip pystray Pillow winotify
+Invoke-Pip @("keyboard", "sounddevice", "soundfile", "numpy", "requests", "pyperclip", "pystray", "Pillow", "winotify")
+$ErrorActionPreference = $prevEAP
 Write-Host "  Dependencies installed" -ForegroundColor Green
 
 # -- Step 3: stage --
