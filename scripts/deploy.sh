@@ -54,5 +54,5 @@ echo "  $BIN_DIR/whisper-stream-ws-client.py"
 echo "  $VENDOR_DIR/whisper_online.py"
 echo
 echo "Next steps (Tim or CL runs):"
-echo "  sudo systemctl restart whisper-api"
-echo "  sleep 2 && curl -s http://127.0.0.1:8788/v1/health || echo \"FAIL\""
+echo "  systemctl --user restart whisper-api"
+echo "  sleep 2 && curl -fsS http://127.0.0.1:8788/health || echo \"FAIL\""
