@@ -21,6 +21,18 @@ powershell -ExecutionPolicy Bypass -File windows\make-benchmark-corpus.ps1 `
   -OutDir C:\Temp\wt-corpus
 ```
 
+Optionally create a deterministic noisy variant before model selection. This is
+not a replacement for real microphone clips, but it catches obvious overfitting
+to pristine SAPI audio:
+
+```powershell
+python scripts\augment_benchmark_corpus.py `
+  --manifest C:\Temp\wt-corpus\manifest.json `
+  --out-dir C:\Temp\wt-corpus-noise15 `
+  --snr-db 15 `
+  --id-suffix=-noise15
+```
+
 Then run the API benchmark against a running tray/API:
 
 ```powershell
@@ -53,6 +65,18 @@ python scripts\benchmark_asr_candidates.py `
   --compute-type int8 `
   --runs 3 `
   --json-out C:\Temp\asr-candidates.json
+```
+
+Repeat against the noisy manifest when comparing close candidates:
+
+```powershell
+python scripts\benchmark_asr_candidates.py `
+  --manifest C:\Temp\wt-corpus-noise15\manifest.json `
+  --models tiny.en,base.en,small.en `
+  --device cuda `
+  --compute-type int8 `
+  --runs 3 `
+  --json-out C:\Temp\asr-candidates-noise15.json
 ```
 
 See `docs/asr-backend-research.md` for the backend shortlist.

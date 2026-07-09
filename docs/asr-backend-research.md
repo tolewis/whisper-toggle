@@ -147,5 +147,30 @@ Rerun on the same 5-clip corpus (`C:\src\wt-bench\asr-candidates-corpus-fw-cuda-
 Current synthetic-corpus recommendation: `tiny.en` is now the leading low-latency
 candidate if we can tolerate occasional technical-term confusions. `base.en` is
 the safer default for technical dictation. `small.en` is not justified by these
-synthetic clips. The next real gate is microphone/noisy/live clips and a true
-streaming backend candidate (`sherpa-onnx`).
+synthetic clips.
+
+## Iteration-4 deterministic noise stress pass
+
+Iteration 4 added `scripts/augment_benchmark_corpus.py`, which creates a
+repeatable noisy corpus from the clean SAPI manifest using deterministic white
+noise. This does **not** replace real microphone clips, but it gives a stable
+stress pass before changing defaults.
+
+Jubiku artifacts:
+- Noisy corpus: `C:\src\wt-bench\corpus-noise15\manifest.json`
+- Results: `C:\src\wt-bench\asr-candidates-corpus-noise15-fw-cuda-int8.json`
+
+Faster-Whisper CUDA/int8, beam size 1, 15 dB white-noise corpus, 2 measured runs
+per clip:
+
+| Model | Corpus median sec | Corpus median RTF | Median dictation WER | Max dictation WER | Noise-specific failures |
+|---|---:|---:|---:|---:|---|
+| `tiny.en` | 0.133 | 0.0246 | 0.0769 | 0.1429 | `fox` -> `box`; `git` -> `Get`; `verify` -> `verified`. |
+| `base.en` | 0.175 | 0.0323 | 0.000 | 0.0769 | `fox` -> `box`; `int eight` -> `in 8`. |
+| `small.en` | 0.315 | 0.0576 | 0.000 | 0.1429 | `int eight` -> `Intate`; otherwise robust but slower. |
+
+Noise-stress recommendation: keep `base.en` as the best current default-quality
+candidate. `tiny.en` remains attractive for a low-latency mode but degraded on
+noise. `small.en` again fails to justify its added latency. The next real gate is
+human microphone/noisy/live clips and a true streaming backend candidate
+(`sherpa-onnx`).

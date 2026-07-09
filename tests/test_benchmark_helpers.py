@@ -17,6 +17,7 @@ def _load_script(name: str):
 
 benchmark = _load_script("benchmark_whisper_toggle")
 asr_candidates = _load_script("benchmark_asr_candidates")
+augment_corpus = _load_script("augment_benchmark_corpus")
 
 
 def test_wer_exact_match_is_zero():
@@ -45,13 +46,17 @@ def test_dictation_wer_treats_common_number_spellings_as_equivalent():
     assert asr_candidates.dictation_wer(expected, actual) == 0
 
 
-def test_asr_manifest_loads_json_array_and_relative_audio(tmp_path):
-    wav_path = tmp_path / "clip.wav"
-    with wave.open(str(wav_path), "wb") as wav:
+def _write_test_wav(path: Path, frames: bytes = b"\x00\x00" * 1600) -> None:
+    with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
-        wav.writeframes(b"\x00\x00" * 1600)
+        wav.writeframes(frames)
+
+
+def test_asr_manifest_loads_json_array_and_relative_audio(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_test_wav(wav_path)
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps([{"id": "clip", "audio": "clip.wav", "expected": "hello world"}]),
@@ -64,3 +69,29 @@ def test_asr_manifest_loads_json_array_and_relative_audio(tmp_path):
     assert clips[0]["audio"] == wav_path
     assert clips[0]["expected"] == "hello world"
     assert round(clips[0]["audio_sec"], 1) == 0.1
+
+
+def test_augment_corpus_writes_deterministic_noisy_manifest(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    frames = b"\xe8\x03" * 1600  # constant non-silent i16 sample value 1000
+    _write_test_wav(wav_path, frames)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps([{"id": "clip", "audio": "clip.wav", "expected": "hello world"}]),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "noise"
+    rows = augment_corpus.augment_manifest(manifest, out_dir, snr_db=15.0, seed=7, id_suffix="-noise15")
+
+    assert rows == [
+        {
+            "id": "clip-noise15",
+            "expected": "hello world",
+            "audio": "clip-noise15.wav",
+            "augmentation": {"type": "white_noise", "snr_db": 15.0, "seed": 8},
+        }
+    ]
+    assert (out_dir / "clip-noise15.wav").exists()
+    assert json.loads((out_dir / "manifest.json").read_text(encoding="utf-8")) == rows
+    assert augment_corpus.read_wav_i16(out_dir / "clip-noise15.wav")[1] != [1000] * 1600
