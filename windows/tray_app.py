@@ -35,6 +35,7 @@ from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
 from whisper_toggle.status_messages import startup_loading_notice
 from whisper_toggle.win_input import KeyboardAdapter, MicRecorder
+from whisper_toggle.win_policy import should_own_hotkey
 
 log = setup_logging("whisper-toggle.tray")
 
@@ -102,8 +103,10 @@ class TrayApp:
                 self.tray.visible = True
             except Exception as exc:  # noqa: BLE001
                 log.debug("tray update failed: %s", exc)
-        # Hotkey ownership follows readiness
-        ready = state == State.IDLE and self.api.is_healthy()
+        # Hotkey ownership follows readiness. Crucially it stays OWNED through
+        # RECORDING and PROCESSING (not just IDLE) so the 2nd Win+H press is
+        # still intercepted to STOP instead of opening OS Voice Typing.
+        ready = should_own_hotkey(state, self.api.is_healthy())
         self._set_hotkey_ownership(ready)
 
     def _menu(self):
@@ -578,7 +581,7 @@ class TrayApp:
                 self._win_owner = WinHotkeyOwner(on_hotkey=self.toggle)
                 if self._win_owner.start():
                     # Enable only when ready
-                    self._set_hotkey_ownership(self.state == State.IDLE and self.api.is_healthy())
+                    self._set_hotkey_ownership(should_own_hotkey(self.state, self.api.is_healthy()))
                     log.info("Win+H native ownership hook ready")
                     self._ensure_backup_hotkey()
                     return
