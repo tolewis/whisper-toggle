@@ -129,21 +129,41 @@ class Api:
             log.debug("close failed", exc_info=True)
 
 
+def _tk_fallback() -> None:
+    """Last resort so Settings always opens even if the webview backend is
+    missing/broken on this machine."""
+    try:
+        import settings_gui  # loose script in the same dir (on sys.path)
+
+        settings_gui.main([])
+    except Exception:
+        log.exception("tk settings fallback failed")
+
+
 def main() -> None:
-    import webview
+    try:
+        import webview
+    except Exception:
+        log.exception("pywebview unavailable - falling back to tk settings")
+        _tk_fallback()
+        return
 
     html = (Path(__file__).resolve().parent / "settings_web.html").read_text(encoding="utf-8")
     api = Api()
-    webview.create_window(
-        "Whisper Toggle — Settings",
-        html=html,
-        js_api=api,
-        width=520,
-        height=720,
-        resizable=False,
-        background_color="#14161a",
-    )
-    webview.start()
+    try:
+        webview.create_window(
+            "Whisper Toggle — Settings",
+            html=html,
+            js_api=api,
+            width=520,
+            height=720,
+            resizable=False,
+            background_color="#14161a",
+        )
+        webview.start()
+    except Exception:
+        log.exception("webview failed to start - falling back to tk settings")
+        _tk_fallback()
 
 
 if __name__ == "__main__":
