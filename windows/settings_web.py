@@ -155,9 +155,9 @@ def main() -> None:
             "Whisper Toggle — Settings",
             html=html,
             js_api=api,
-            width=840,
-            height=640,
-            resizable=False,
+            width=860,
+            height=680,
+            resizable=True,
             background_color="#14161a",
         )
         webview.start()
