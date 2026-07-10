@@ -155,8 +155,8 @@ def main() -> None:
             "Whisper Toggle — Settings",
             html=html,
             js_api=api,
-            width=520,
-            height=720,
+            width=840,
+            height=640,
             resizable=False,
             background_color="#14161a",
         )

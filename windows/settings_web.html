@@ -20,9 +20,12 @@
   body{
     background:var(--bg); color:var(--text);
     font:14px/1.45 -apple-system,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;
-    -webkit-font-smoothing:antialiased; padding:18px 18px 92px;
+    -webkit-font-smoothing:antialiased; padding:18px 20px 84px;
   }
-  .head{display:flex;align-items:center;gap:12px;margin:2px 2px 18px}
+  .head{display:flex;align-items:center;gap:12px;margin:2px 2px 16px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .col{display:flex;flex-direction:column;gap:16px}
+  .col .card{margin-bottom:0}
   .logo{width:34px;height:34px;border-radius:9px;background:
     radial-gradient(120% 120% at 30% 20%, #46e6a8, var(--accent-dim));
     display:grid;place-items:center;font-size:18px}
@@ -88,6 +91,8 @@
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
   </div>
 
+  <div class="grid">
+  <div class="col">
   <div class="card">
     <h2>Shortcut</h2>
     <div class="row"><div class="txt"><b>Dictation hotkey</b><small>Press once to start, again to stop.</small></div>
@@ -100,10 +105,12 @@
     <h2>Engine</h2>
     <div class="row"><div class="txt"><b>Device</b><small>Auto picks CUDA when available.</small></div>
       <select id="device"></select></div>
-    <div class="row"><div class="txt"><b>Model</b><small>Blank = automatic (small.en on NVIDIA).</small></div>
+    <div class="row"><div class="txt"><b>Model</b><small>Bigger = more accurate, a little slower. medium.en is a great fit for an NVIDIA GPU.</small></div>
       <select id="model"></select></div>
   </div>
+  </div>
 
+  <div class="col">
   <div class="card">
     <h2>Experience</h2>
     <div class="row"><div class="txt"><b>Audible start/stop cues</b><small>A ding when recording starts and stops.</small></div>
@@ -122,6 +129,8 @@
       <input type="number" class="num" id="partial_debounce_ms" min="0" step="50"></div>
     <div class="row"><div class="txt"><b>Stop catch-up</b><small>Tail captured after you press stop (ms).</small></div>
       <input type="number" class="num" id="hardware_catchup_ms" min="0" step="50"></div>
+  </div>
+  </div>
   </div>
 
   <div class="footer">
