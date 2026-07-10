@@ -120,7 +120,7 @@ class TrayApp:
 
     def _menu(self):
         return pystray.Menu(
-            pystray.MenuItem("Whisper Toggle v2.1.0", None, enabled=False),
+            pystray.MenuItem("Whisper Toggle v2.3.0", None, enabled=False),
             pystray.MenuItem(lambda _: self.status_text, None, enabled=False),
             pystray.MenuItem(lambda _: f"Hotkey: {self.cfg.hotkey}", None, enabled=False),
             pystray.MenuItem(
@@ -159,7 +159,7 @@ class TrayApp:
         env["WHISPER_API_DEVICE"] = device if device in ("cuda", "cpu") else "cpu"
         env["WHISPER_API_COMPUTE_TYPE"] = compute if compute in ("int8", "float16", "float32") else "int8"
         env["WHISPER_API_LANGUAGE"] = "en"
-        env["WHISPER_API_VERSION"] = "2.1.0"
+        env["WHISPER_API_VERSION"] = "2.3.0"
         env["WHISPER_API_PRELOAD"] = "1"
         env["WHISPER_API_REQUIRE_SMOKE"] = "1"
         env["WHISPER_STREAM_ENGINE"] = self.cfg.stream_engine
