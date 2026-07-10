@@ -193,7 +193,8 @@ class TrayApp:
         try:
             creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             self.api_process = subprocess.Popen(
-                [python, "-m", "uvicorn", "app:app", "--host", API_HOST, "--port", str(API_PORT)],
+                [python, "-m", "uvicorn", "app:app", "--host", API_HOST, "--port", str(API_PORT),
+                 "--ws-ping-interval", "20", "--ws-ping-timeout", "60"],
                 cwd=str(cwd),
                 env=env,
                 stdout=subprocess.DEVNULL,
@@ -265,7 +266,8 @@ class TrayApp:
                     pass
 
     def _start_recording(self) -> None:
-        sounds.play_start()  # audible "recording started" cue
+        if self.cfg.audible_cues:
+            sounds.play_start()  # audible "recording started" cue
         self.session.clear()
         self._pcm_buffer = bytearray()
         self._preview_confirmed = ""
@@ -330,7 +332,8 @@ class TrayApp:
         log.info("live stream connected")
 
     def _stop_recording(self) -> None:
-        sounds.play_stop()  # audible "recording stopped" cue on the second press
+        if self.cfg.audible_cues:
+            sounds.play_stop()  # audible "recording stopped" cue on the second press
         self._recording = False
         catchup = max(0, int(self.cfg.hardware_catchup_ms)) / 1000.0
         if catchup:
@@ -639,12 +642,12 @@ class TrayApp:
             from whisper_toggle.config import default_config_path
 
             config_path = default_config_path()
-            settings_py = APP_DIR / "settings_gui.py"
+            settings_py = APP_DIR / "settings_web.py"
             if not settings_py.exists():
                 # installed layout
-                settings_py = Path(os.environ.get("LOCALAPPDATA", "")) / "Whisper Toggle" / "settings_gui.py"
+                settings_py = Path(os.environ.get("LOCALAPPDATA", "")) / "Whisper Toggle" / "settings_web.py"
             creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            # Use console-less pythonw so no flash; settings still gets its own UI thread.
+            # Use console-less pythonw so no flash; the webview owns its own window.
             py = sys.executable
             if py.lower().endswith("python.exe"):
                 pyw = py[:-10] + "pythonw.exe"
@@ -652,7 +655,7 @@ class TrayApp:
                     py = pyw
             subprocess.Popen(
                 [py, str(settings_py), "--config", str(config_path)],
-                cwd=str(APP_DIR if (APP_DIR / "settings_gui.py").exists() else config_path.parent),
+                cwd=str(APP_DIR if (APP_DIR / "settings_web.py").exists() else config_path.parent),
                 creationflags=creation,
             )
             log.info("opened settings process: %s", settings_py)

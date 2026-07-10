@@ -34,6 +34,7 @@ class AppConfig:
     # Live partials require streaming; off by default until WS is stable on Windows.
     live_partials: bool = False
     suppress_hotkey: bool = True  # capture Win+H so OS voice typing does not fire
+    audible_cues: bool = True  # ding on record start/stop (batch shows no text until stop)
 
 
 def default_config() -> AppConfig:

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Whisper Toggle — Settings</title>
+<style>
+  :root{
+    --bg:#14161a; --card:#1b1e25; --card-2:#20242d; --line:#2a2f3a;
+    --text:#eef1f6; --muted:#9aa3b2; --accent:#34d399; --accent-dim:#1f6f57;
+    --danger:#f87171; --radius:14px; --shadow:0 1px 0 rgba(255,255,255,.03), 0 8px 24px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f4f6fa; --card:#ffffff; --card-2:#f0f2f7; --line:#e2e6ee;
+           --text:#1a1d24; --muted:#66707f; --accent:#0e9f6e; --accent-dim:#a7f3d0;
+           --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.08);}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.45 -apple-system,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; padding:18px 18px 92px;
+  }
+  .head{display:flex;align-items:center;gap:12px;margin:2px 2px 18px}
+  .logo{width:34px;height:34px;border-radius:9px;background:
+    radial-gradient(120% 120% at 30% 20%, #46e6a8, var(--accent-dim));
+    display:grid;place-items:center;font-size:18px}
+  .head h1{font-size:16px;font-weight:650;margin:0;letter-spacing:.2px}
+  .status{margin-left:auto;display:flex;align-items:center;gap:7px;
+    background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:5px 11px;font-size:12px;color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.15)}
+  .dot.ready{background:var(--accent);box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:4px 16px;margin-bottom:14px}
+  .card h2{font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;
+    color:var(--muted);margin:16px 0 6px}
+  .row{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:0}
+  .row .txt{flex:1;min-width:0}
+  .row .txt b{font-weight:550;display:block}
+  .row .txt small{color:var(--muted);font-size:12px}
+  .beta{font-size:10px;font-weight:700;color:var(--accent);border:1px solid var(--accent-dim);
+    border-radius:6px;padding:1px 5px;margin-left:7px;vertical-align:1px;letter-spacing:.5px}
+
+  select,input[type=text],input[type=number]{
+    background:var(--card-2);color:var(--text);border:1px solid var(--line);
+    border-radius:9px;padding:8px 10px;font:inherit;min-width:130px;outline:none}
+  select:focus,input:focus{border-color:var(--accent)}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;padding:10px 0 4px}
+  .chip{background:var(--card-2);border:1px solid var(--line);color:var(--muted);
+    border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer;user-select:none}
+  .chip:hover{border-color:var(--accent)}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#06281d;font-weight:650}
+  .num{width:92px;min-width:0}
+
+  /* toggle */
+  .sw{position:relative;width:42px;height:24px;flex:0 0 auto;cursor:pointer}
+  .sw input{opacity:0;width:0;height:0;position:absolute}
+  .sw .track{position:absolute;inset:0;background:var(--card-2);border:1px solid var(--line);
+    border-radius:999px;transition:.16s}
+  .sw .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:var(--muted);transition:.16s}
+  .sw input:checked + .track{background:var(--accent);border-color:var(--accent)}
+  .sw input:checked + .track + .knob{transform:translateX(18px);background:#06281d}
+
+  .footer{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:flex-end;
+    align-items:center;padding:14px 18px;background:linear-gradient(180deg,transparent,var(--bg) 22%);
+    backdrop-filter:blur(2px)}
+  .link{margin-right:auto;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:none}
+  .link:hover{color:var(--text)}
+  button{font:inherit;border-radius:10px;padding:9px 18px;cursor:pointer;border:1px solid var(--line)}
+  .ghost{background:transparent;color:var(--text)}
+  .ghost:hover{background:var(--card)}
+  .primary{background:var(--accent);border-color:var(--accent);color:#06281d;font-weight:650}
+  .primary:hover{filter:brightness(1.05)}
+  .saved{color:var(--accent);font-size:12.5px;margin-right:6px;opacity:0;transition:.2s}
+  .saved.show{opacity:1}
+  .hint{color:var(--muted);font-size:12px;padding:2px 0 12px}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">🎙️</div>
+    <h1>Whisper Toggle</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Shortcut</h2>
+    <div class="row"><div class="txt"><b>Dictation hotkey</b><small>Press once to start, again to stop.</small></div>
+      <input type="text" id="hotkey" style="width:150px" /></div>
+    <div class="chips" id="hotkeyChips"></div>
+    <div class="hint">Ctrl+Shift+H is the most reliable on Windows 11. Win+H is not offered — Windows reserves it for its own voice typing.</div>
+  </div>
+
+  <div class="card">
+    <h2>Engine</h2>
+    <div class="row"><div class="txt"><b>Device</b><small>Auto picks CUDA when available.</small></div>
+      <select id="device"></select></div>
+    <div class="row"><div class="txt"><b>Model</b><small>Blank = automatic (small.en on NVIDIA).</small></div>
+      <select id="model"></select></div>
+  </div>
+
+  <div class="card">
+    <h2>Experience</h2>
+    <div class="row"><div class="txt"><b>Audible start/stop cues</b><small>A ding when recording starts and stops.</small></div>
+      <label class="sw"><input type="checkbox" id="audible_cues"><span class="track"></span><span class="knob"></span></label></div>
+    <div class="row"><div class="txt"><b>Live streaming <span class="beta">BETA</span></b><small>Transcribe while you speak (higher CPU).</small></div>
+      <label class="sw"><input type="checkbox" id="streaming"><span class="track"></span><span class="knob"></span></label></div>
+    <div class="row"><div class="txt"><b>Live preview overlay <span class="beta">BETA</span></b><small>Shows text as you speak; inserts once at the end.</small></div>
+      <label class="sw"><input type="checkbox" id="live_partials"><span class="track"></span><span class="knob"></span></label></div>
+    <div class="row"><div class="txt"><b>Start with Windows</b><small>Launch automatically when you sign in.</small></div>
+      <label class="sw"><input type="checkbox" id="autostart"><span class="track"></span><span class="knob"></span></label></div>
+  </div>
+
+  <div class="card">
+    <h2>Advanced</h2>
+    <div class="row"><div class="txt"><b>Partial delay</b><small>Debounce for live preview (ms).</small></div>
+      <input type="number" class="num" id="partial_debounce_ms" min="0" step="50"></div>
+    <div class="row"><div class="txt"><b>Stop catch-up</b><small>Tail captured after you press stop (ms).</small></div>
+      <input type="number" class="num" id="hardware_catchup_ms" min="0" step="50"></div>
+  </div>
+
+  <div class="footer">
+    <a class="link" id="openLogs">Open logs</a>
+    <span class="saved" id="saved">Saved ✓</span>
+    <button class="ghost" id="cancel">Close</button>
+    <button class="primary" id="save">Save</button>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const BOOLS = ["audible_cues","streaming","live_partials","autostart"];
+  const TEXT  = ["hotkey","device","model","partial_debounce_ms","hardware_catchup_ms"];
+  let CHOICES = {};
+
+  function fillSelect(el, values, current){
+    el.innerHTML = "";
+    values.forEach(v => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = v === "" ? "Automatic" : v;
+      if (v === current) o.selected = true;
+      el.appendChild(o);
+    });
+  }
+  function renderChips(current){
+    const box = $("hotkeyChips"); box.innerHTML = "";
+    (CHOICES.hotkey||[]).forEach(v => {
+      const c = document.createElement("div");
+      c.className = "chip" + (v === current ? " on" : "");
+      c.textContent = v;
+      c.onclick = () => { $("hotkey").value = v; markChips(v); };
+      box.appendChild(c);
+    });
+  }
+  function markChips(v){ [...document.querySelectorAll(".chip")].forEach(c => c.classList.toggle("on", c.textContent === v)); }
+
+  function apply(state){
+    const c = state.config; CHOICES = state.choices || {};
+    fillSelect($("device"), CHOICES.device||["auto"], c.device_override);
+    fillSelect($("model"), CHOICES.model||[""], c.model);
+    $("hotkey").value = c.hotkey; renderChips(c.hotkey);
+    $("hotkey").oninput = () => markChips($("hotkey").value.trim().toLowerCase());
+    BOOLS.forEach(k => $(k).checked = !!c[k]);
+    $("partial_debounce_ms").value = c.partial_debounce_ms;
+    $("hardware_catchup_ms").value = c.hardware_catchup_ms;
+    const rt = state.runtime || {};
+    $("dot").classList.toggle("ready", !!rt.ready);
+    $("statusText").textContent = rt.ready
+      ? `Ready · ${rt.model||"—"} · ${(rt.device||"—").toUpperCase()}`
+      : "Engine starting…";
+  }
+  function collect(){
+    const p = { hotkey:$("hotkey").value.trim().toLowerCase(),
+      device_override:$("device").value, model:$("model").value,
+      partial_debounce_ms:+$("partial_debounce_ms").value||0,
+      hardware_catchup_ms:+$("hardware_catchup_ms").value||0 };
+    BOOLS.forEach(k => p[k] = $(k).checked);
+    return p;
+  }
+
+  async function boot(){
+    const state = await window.pywebview.api.get_state();
+    apply(state);
+    $("save").onclick = async () => {
+      const r = await window.pywebview.api.save(collect());
+      if (r && r.ok){ const s=$("saved"); s.classList.add("show"); setTimeout(()=>s.classList.remove("show"),1600); }
+    };
+    $("cancel").onclick = () => window.pywebview.api.close_window();
+    $("openLogs").onclick = () => window.pywebview.api.open_logs();
+  }
+  window.addEventListener("pywebviewready", boot);
+</script>
+</body>
+</html>
