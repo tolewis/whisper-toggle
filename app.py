@@ -77,7 +77,7 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-APP_VERSION = env("WHISPER_API_VERSION", "2.1.0")
+APP_VERSION = env("WHISPER_API_VERSION", "2.2.0")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 
@@ -290,9 +290,27 @@ def create_stream_processor(model_name: str, device: str, compute_type: str, lan
     return StreamingASRProcessor(model_name, device, compute_type, language)
 
 
-async def _send_json(websocket: WebSocket, payload: dict):
-    if websocket.application_state == WebSocketState.CONNECTED:
+async def _send_json(websocket: WebSocket, payload: dict) -> bool:
+    """Send one JSON frame; return True on success, False if the socket is
+    closed/closing or the send races a transport close.
+
+    The ``application_state == CONNECTED`` check alone is insufficient: the
+    transport can close (e.g. client keepalive ping timeout) between the check
+    and the send, and Starlette then raises
+    ``RuntimeError: Unexpected ASGI message 'websocket.send', after sending
+    'websocket.close' or response already completed.`` We treat any such send
+    failure as a disconnect so callers can break the loop cleanly instead of
+    crashing the endpoint.
+    """
+    if websocket.application_state != WebSocketState.CONNECTED:
+        return False
+    try:
         await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        return True
+    except (WebSocketDisconnect, RuntimeError) as exc:
+        # Transport closed underneath us between the state check and the send.
+        log.debug("stream send after close ignored: %s", exc)
+        return False
 
 
 @app.post("/v1/audio/transcriptions")
@@ -440,9 +458,13 @@ async def audio_stream(websocket: WebSocket):
 
     try:
         while True:
+            # Stop the moment the socket is no longer usable so we never try to
+            # receive or send on a closing/closed transport.
+            if websocket.application_state != WebSocketState.CONNECTED:
+                return
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
-                break
+                return
 
             if message.get("bytes") is not None:
                 audio_duration += processor.insert_pcm(message["bytes"] or b"")
@@ -450,11 +472,13 @@ async def audio_stream(websocket: WebSocket):
                 try:
                     control = json.loads(message["text"] or "{}")
                 except json.JSONDecodeError:
-                    await _send_json(websocket, {"type": "error", "error": "invalid_json"})
+                    if not await _send_json(websocket, {"type": "error", "error": "invalid_json"}):
+                        return
                     continue
                 if control.get("type") == "end":
                     break
-                await _send_json(websocket, {"type": "error", "error": "unknown_control"})
+                if not await _send_json(websocket, {"type": "error", "error": "unknown_control"}):
+                    return
                 continue
 
             now = time.monotonic()
@@ -464,16 +488,20 @@ async def audio_stream(websocket: WebSocket):
             confirmed, partial = await asyncio.to_thread(processor.process)
             last_partial_at = now
             if confirmed is not None:
-                await _send_json(websocket, confirmed)
+                if not await _send_json(websocket, confirmed):
+                    return
             if partial is not None and partial["text"] != last_partial_text:
                 last_partial_text = partial["text"]
-                await _send_json(websocket, partial)
+                if not await _send_json(websocket, partial):
+                    return
 
         confirmed, partial = await asyncio.to_thread(processor.process)
         if confirmed is not None:
-            await _send_json(websocket, confirmed)
+            if not await _send_json(websocket, confirmed):
+                return
         if partial is not None and partial["text"] != last_partial_text:
-            await _send_json(websocket, partial)
+            if not await _send_json(websocket, partial):
+                return
 
         final_text = await asyncio.to_thread(processor.finish)
         await _send_json(
@@ -494,4 +522,10 @@ async def audio_stream(websocket: WebSocket):
             pass
     finally:
         if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close()
+            try:
+                await websocket.close()
+            except (WebSocketDisconnect, RuntimeError) as exc:
+                # The transport may have closed underneath us (client vanished);
+                # a redundant close raises 'Unexpected ASGI message
+                # websocket.close' which we swallow.
+                log.debug("stream close after disconnect ignored: %s", exc)

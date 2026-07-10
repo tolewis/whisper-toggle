@@ -10,9 +10,9 @@ set WHISPER_API_LANGUAGE=en
 
 REM Try venv first, fall back to system Python
 if exist "%LOCALAPPDATA%\whisper-venv\Scripts\python.exe" (
-    "%LOCALAPPDATA%\whisper-venv\Scripts\python" -m uvicorn app:app --host 127.0.0.1 --port 8788
+    "%LOCALAPPDATA%\whisper-venv\Scripts\python" -m uvicorn app:app --host 127.0.0.1 --port 8788 --ws-ping-interval 20 --ws-ping-timeout 60
 ) else (
-    python -m uvicorn app:app --host 127.0.0.1 --port 8788
+    python -m uvicorn app:app --host 127.0.0.1 --port 8788 --ws-ping-interval 20 --ws-ping-timeout 60
 )
 
 pause

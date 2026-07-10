@@ -31,6 +31,7 @@ from whisper_toggle.config import AppConfig, app_data_dir, load_config, save_con
 from whisper_toggle.controller import State
 from whisper_toggle.device import resolve_device
 from whisper_toggle.icons import tray_icon, write_app_icon
+from whisper_toggle.live_typing import next_to_type
 from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
@@ -118,7 +119,7 @@ class TrayApp:
 
     def _menu(self):
         return pystray.Menu(
-            pystray.MenuItem("Whisper Toggle v2.1.0", None, enabled=False),
+            pystray.MenuItem("Whisper Toggle v2.2.0", None, enabled=False),
             pystray.MenuItem(lambda _: self.status_text, None, enabled=False),
             pystray.MenuItem(lambda _: f"Hotkey: {self.cfg.hotkey}", None, enabled=False),
             pystray.MenuItem(
@@ -157,7 +158,7 @@ class TrayApp:
         env["WHISPER_API_DEVICE"] = device if device in ("cuda", "cpu") else "cpu"
         env["WHISPER_API_COMPUTE_TYPE"] = compute if compute in ("int8", "float16", "float32") else "int8"
         env["WHISPER_API_LANGUAGE"] = "en"
-        env["WHISPER_API_VERSION"] = "2.1.0"
+        env["WHISPER_API_VERSION"] = "2.2.0"
         env["WHISPER_API_PRELOAD"] = "1"
         env["WHISPER_API_REQUIRE_SMOKE"] = "1"
 
@@ -193,7 +194,8 @@ class TrayApp:
         try:
             creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             self.api_process = subprocess.Popen(
-                [python, "-m", "uvicorn", "app:app", "--host", API_HOST, "--port", str(API_PORT)],
+                [python, "-m", "uvicorn", "app:app", "--host", API_HOST, "--port", str(API_PORT),
+                 "--ws-ping-interval", "20", "--ws-ping-timeout", "60"],
                 cwd=str(cwd),
                 env=env,
                 stdout=subprocess.DEVNULL,
@@ -265,7 +267,8 @@ class TrayApp:
                     pass
 
     def _start_recording(self) -> None:
-        sounds.play_start()  # audible "recording started" cue
+        if self.cfg.audible_cues:
+            sounds.play_start()  # audible "recording started" cue
         self.session.clear()
         self._pcm_buffer = bytearray()
         self._preview_confirmed = ""
@@ -293,7 +296,11 @@ class TrayApp:
         # already captured so semi-live mode does not delay recording start. If
         # the streaming stack fails, a slower batch-preview loop keeps the live
         # proofing UI useful without touching the focused app.
-        if self.cfg.live_partials and self.cfg.streaming:
+        # Live streaming types confirmed words into the focused app as you speak
+        # (append-only). It runs on the streaming toggle alone; the preview
+        # overlay is a separate opt-in.
+        if self.cfg.streaming:
+            self._typed_live = ""
             threading.Thread(target=self._start_live_stream, daemon=True).start()
         elif self.cfg.live_partials:
             self._start_batch_preview_loop()
@@ -330,7 +337,8 @@ class TrayApp:
         log.info("live stream connected")
 
     def _stop_recording(self) -> None:
-        sounds.play_stop()  # audible "recording stopped" cue on the second press
+        if self.cfg.audible_cues:
+            sounds.play_stop()  # audible "recording stopped" cue on the second press
         self._recording = False
         catchup = max(0, int(self.cfg.hardware_catchup_ms)) / 1000.0
         if catchup:
@@ -366,6 +374,12 @@ class TrayApp:
                 # final callback already set idle
                 return
             log.warning("stream incomplete - batch fallback")
+
+        # If live streaming already typed text into the app, do NOT batch-insert
+        # the whole transcript on top of it (that would duplicate everything).
+        if self.cfg.streaming and getattr(self, "_typed_live", ""):
+            self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
+            return
 
         if not pcm or len(pcm) < 1000:
             if self.cfg.live_partials:
@@ -434,6 +448,18 @@ class TrayApp:
                 self._partial_timer.daemon = True
                 self._partial_timer.start()
 
+    def _type_live(self, confirmed: str) -> None:
+        """Type newly-confirmed words into the focused app, append-only."""
+        typed = getattr(self, "_typed_live", "")
+        new = next_to_type(typed, confirmed)
+        if not new:
+            return
+        try:
+            self.kb.type_text(new)
+            self._typed_live = typed + new
+        except Exception:
+            log.exception("live type failed")
+
     def _on_confirmed(self, text: str) -> None:
         with self._partial_lock:
             if self._partial_timer is not None:
@@ -442,28 +468,38 @@ class TrayApp:
         text = (text or "").strip()
         if not text:
             return
-        if text.startswith(self._preview_confirmed):
-            self._preview_confirmed = text
-        else:
-            self._preview_confirmed = self._join_preview(self._preview_confirmed, text)
-        self._update_preview(self._preview_confirmed)
+        # Live streaming: type newly-confirmed words straight into the app.
+        if self.cfg.streaming:
+            self._type_live(text)
+        # Keep the optional preview overlay in sync too.
+        if self.cfg.live_partials:
+            if text.startswith(self._preview_confirmed):
+                self._preview_confirmed = text
+            else:
+                self._preview_confirmed = self._join_preview(self._preview_confirmed, text)
+            self._update_preview(self._preview_confirmed)
 
     def _on_final(self, text: str) -> None:
         with self._partial_lock:
             if self._partial_timer is not None:
                 self._partial_timer.cancel()
                 self._partial_timer = None
+        text = (text or "").strip()
         try:
-            self.session.finalize(text)
+            if self.cfg.streaming:
+                self._type_live(text)          # type only the untyped tail
+            else:
+                self.session.finalize(text)
+        except Exception as exc:  # noqa: BLE001
+            log.error("final type failed: %s", exc)
+        if self.cfg.live_partials:
             if text:
                 self._update_preview(text)
                 self._stop_preview(delay=1.5)
-                self._notify(text[:60])
             else:
                 self._stop_preview(delay=0.5)
-        except Exception as exc:  # noqa: BLE001
-            log.error("final type failed: %s", exc)
-            self._stop_preview(delay=0.5)
+        if text:
+            self._notify(text[:60])
         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
 
     def _join_preview(self, left: str, right: str) -> str:
@@ -639,12 +675,12 @@ class TrayApp:
             from whisper_toggle.config import default_config_path
 
             config_path = default_config_path()
-            settings_py = APP_DIR / "settings_gui.py"
+            settings_py = APP_DIR / "settings_web.py"
             if not settings_py.exists():
                 # installed layout
-                settings_py = Path(os.environ.get("LOCALAPPDATA", "")) / "Whisper Toggle" / "settings_gui.py"
+                settings_py = Path(os.environ.get("LOCALAPPDATA", "")) / "Whisper Toggle" / "settings_web.py"
             creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            # Use console-less pythonw so no flash; settings still gets its own UI thread.
+            # Use console-less pythonw so no flash; the webview owns its own window.
             py = sys.executable
             if py.lower().endswith("python.exe"):
                 pyw = py[:-10] + "pythonw.exe"
@@ -652,7 +688,7 @@ class TrayApp:
                     py = pyw
             subprocess.Popen(
                 [py, str(settings_py), "--config", str(config_path)],
-                cwd=str(APP_DIR if (APP_DIR / "settings_gui.py").exists() else config_path.parent),
+                cwd=str(APP_DIR if (APP_DIR / "settings_web.py").exists() else config_path.parent),
                 creationflags=creation,
             )
             log.info("opened settings process: %s", settings_py)

@@ -78,8 +78,8 @@ Invoke-Pip @("faster-whisper==1.2.1", "ctranslate2==4.7.1", "fastapi==0.131.0", 
              "python-multipart>=0.0.20", "numpy>=1.26", "websockets>=15.0", "httpx>=0.27")
 Write-Host "    CUDA 12 runtime: cuBLAS + cudart (for CTranslate2 GPU inference)"
 Invoke-Pip @("nvidia-cublas-cu12==12.9.1.4", "nvidia-cuda-runtime-cu12==12.9.79")
-Write-Host "    Tray: keyboard, sounddevice, pystray, Pillow, ..."
-Invoke-Pip @("keyboard", "sounddevice", "soundfile", "numpy", "requests", "pyperclip", "pystray", "Pillow", "winotify")
+Write-Host "    Tray: keyboard, sounddevice, pystray, Pillow, pywebview, ..."
+Invoke-Pip @("keyboard", "sounddevice", "soundfile", "numpy", "requests", "pyperclip", "pystray", "Pillow", "winotify", "pywebview")
 $ErrorActionPreference = $prevEAP
 Write-Host "  Dependencies installed" -ForegroundColor Green
 
@@ -93,6 +93,8 @@ Copy-Item "$RepoRoot\app.py" "$StageDir\"
 Copy-Item "$RepoRoot\windows\whisper-toggle-tray.pyw" "$StageDir\"
 Copy-Item "$RepoRoot\windows\tray_app.py" "$StageDir\"
 Copy-Item "$RepoRoot\windows\settings_gui.py" "$StageDir\"
+Copy-Item "$RepoRoot\windows\settings_web.py" "$StageDir\"
+Copy-Item "$RepoRoot\windows\settings_web.html" "$StageDir\"
 Copy-Item "$RepoRoot\windows\disable-win-voice-typing.ps1" "$StageDir\"
 Copy-Item "$RepoRoot\whisper_toggle" "$StageDir\whisper_toggle" -Recurse
 # Streaming vendor (ufal whisper_streaming pin)

@@ -48,6 +48,15 @@ def test_load_missing_returns_defaults(tmp_path: Path):
     assert cfg.streaming is False
 
 
+def test_audible_cues_defaults_on_and_roundtrips(tmp_path: Path):
+    assert default_config().audible_cues is True
+    path = tmp_path / "config.json"
+    cfg = default_config()
+    cfg.audible_cues = False
+    save_config(cfg, path)
+    assert load_config(path).audible_cues is False
+
+
 def test_win_h_is_unsupported_and_falls_back_to_default(tmp_path: Path):
     """Windows 11 reserves Win+H for OS voice typing; it cannot be reliably
     claimed, so a win+h config self-heals to the default rather than binding a

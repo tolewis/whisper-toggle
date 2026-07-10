@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 
 # Use the existing whisper venv (already has faster-whisper)
-ExecStart=/home/tlewis/.venvs/whisper/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8788
+ExecStart=/home/tlewis/.venvs/whisper/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8788 --ws-ping-interval 20 --ws-ping-timeout 60
 WorkingDirectory=/home/tlewis/.local/share/whisper-api
 
 # Conservative defaults; override via `systemctl --user edit whisper-api`
