@@ -77,7 +77,7 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-APP_VERSION = env("WHISPER_API_VERSION", "2.1.0")
+APP_VERSION = env("WHISPER_API_VERSION", "2.2.0")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 

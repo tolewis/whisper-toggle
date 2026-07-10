@@ -12,7 +12,7 @@ from pathlib import Path
 
 # Ctrl+Shift+H is the reliable default on Windows 11 (Win+H is owned by OS voice typing).
 DEFAULT_HOTKEY = "ctrl+shift+h"
-CONFIG_VERSION = "2.1.0"
+CONFIG_VERSION = "2.2.0"
 
 # Windows 11 reserves Win+H for its voice-typing launcher and will not let an app
 # reliably claim it, so it is not offered as an option and any stored value heals
