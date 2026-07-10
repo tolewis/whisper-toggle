@@ -84,6 +84,81 @@ async def live_server(monkeypatch):
     await task
 
 
+class _FakeWS:
+    """Minimal stand-in for a Starlette WebSocket for send-path unit tests."""
+
+    def __init__(self, application_state, send_exc=None):
+        self.application_state = application_state
+        self.send_exc = send_exc
+        self.sent = []
+
+    async def send_text(self, text):
+        if self.send_exc is not None:
+            raise self.send_exc
+        self.sent.append(text)
+
+
+@pytest.mark.anyio
+async def test_send_json_swallows_send_after_close_runtimeerror():
+    """Reproduce the production race: application_state still reads CONNECTED,
+    but the transport closed (client keepalive ping timeout), so send_text
+    raises the Starlette 'Unexpected ASGI message ... after sending
+    websocket.close' RuntimeError. _send_json must treat this as a disconnect
+    (return False), never propagate it."""
+    exc = RuntimeError(
+        "Unexpected ASGI message 'websocket.send', after sending "
+        "'websocket.close' or response already completed."
+    )
+    ws = _FakeWS(whisper_app.WebSocketState.CONNECTED, send_exc=exc)
+    ok = await whisper_app._send_json(ws, {"type": "partial", "text": "x"})
+    assert ok is False
+
+
+@pytest.mark.anyio
+async def test_send_json_returns_false_when_not_connected():
+    ws = _FakeWS(whisper_app.WebSocketState.DISCONNECTED)
+    ok = await whisper_app._send_json(ws, {"type": "partial", "text": "x"})
+    assert ok is False
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_send_json_returns_true_on_success():
+    ws = _FakeWS(whisper_app.WebSocketState.CONNECTED)
+    ok = await whisper_app._send_json(ws, {"type": "partial", "text": "hi"})
+    assert ok is True
+    assert ws.sent and "hi" in ws.sent[0]
+
+
+@pytest.mark.anyio
+async def test_stream_endpoint_survives_client_disconnect_midstream(live_server, caplog):
+    """Client goes away mid-stream: the endpoint must terminate cleanly with no
+    unhandled RuntimeError logged, and the server must keep serving."""
+    import logging
+
+    caplog.set_level(logging.ERROR)
+    async with websockets.connect(live_server) as websocket:
+        await websocket.send((b"\x00\x00" * 1600))
+        await asyncio.wait_for(websocket.recv(), timeout=2)
+        # Abruptly drop the connection without an "end" control frame.
+        await websocket.close()
+
+    await asyncio.sleep(0.3)
+
+    # The server survived and still serves a fresh session end-to-end.
+    async with websockets.connect(live_server) as websocket:
+        await websocket.send((b"\x00\x00" * 1600))
+        await asyncio.wait_for(websocket.recv(), timeout=2)
+        await websocket.send('{"type":"end"}')
+        while True:
+            message = await asyncio.wait_for(websocket.recv(), timeout=2)
+            if '"type":"final"' in message.replace(" ", ""):
+                break
+
+    assert "Unexpected ASGI message" not in caplog.text
+    assert "stream endpoint failed" not in caplog.text
+
+
 @pytest.mark.anyio
 async def test_stream_endpoint_emits_partial_confirmed_final_in_order(live_server):
     async with websockets.connect(live_server) as websocket:
