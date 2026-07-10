@@ -36,7 +36,8 @@ def test_save_and_get_state_roundtrip(sw, tmp_path):
     r = api.save({
         "hotkey": "ctrl+`", "device_override": "cpu", "model": "base.en",
         "streaming": True, "live_partials": True, "autostart": False,
-        "audible_cues": False, "partial_debounce_ms": 300, "hardware_catchup_ms": 200,
+        "audible_cues": False, "hybrid_final_correct": False,
+        "partial_debounce_ms": 300, "hardware_catchup_ms": 200,
     })
     assert r["ok"] is True
     c = api.get_state()["config"]
@@ -47,6 +48,8 @@ def test_save_and_get_state_roundtrip(sw, tmp_path):
     assert c["live_partials"] is True
     assert c["autostart"] is False
     assert c["audible_cues"] is False
+    assert c["hybrid_final_correct"] is False
+    assert c["stream_engine"] == "sherpa"
     assert c["partial_debounce_ms"] == 300
 
 

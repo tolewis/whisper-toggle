@@ -25,6 +25,8 @@ def test_default_config_roundtrip(tmp_path: Path):
     assert loaded.device_override == "auto"
     assert loaded.streaming is False
     assert loaded.live_partials is False
+    assert loaded.stream_engine == "sherpa"
+    assert loaded.hybrid_final_correct is True
     # Version tracks the package, not a hardcoded literal, so a version bump
     # does not break this test for a non-behavioral reason.
     assert loaded.version == CONFIG_VERSION
@@ -55,6 +57,23 @@ def test_audible_cues_defaults_on_and_roundtrips(tmp_path: Path):
     cfg.audible_cues = False
     save_config(cfg, path)
     assert load_config(path).audible_cues is False
+
+
+def test_stream_engine_and_hybrid_final_correct_roundtrip(tmp_path: Path):
+    path = tmp_path / "config.json"
+    cfg = default_config()
+    cfg.stream_engine = "whisper_streaming"
+    cfg.hybrid_final_correct = False
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.stream_engine == "whisper_streaming"
+    assert loaded.hybrid_final_correct is False
+
+
+def test_unknown_stream_engine_falls_back_to_sherpa(tmp_path: Path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"stream_engine": "unknown"}), encoding="utf-8")
+    assert load_config(path).stream_engine == "sherpa"
 
 
 def test_win_h_is_unsupported_and_falls_back_to_default(tmp_path: Path):

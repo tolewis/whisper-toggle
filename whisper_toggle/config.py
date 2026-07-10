@@ -18,6 +18,7 @@ CONFIG_VERSION = "2.1.0"
 # reliably claim it, so it is not offered as an option and any stored value heals
 # to the default.
 UNSUPPORTED_HOTKEYS = frozenset({"win+h"})
+STREAM_ENGINES = frozenset({"sherpa", "whisper_streaming"})
 
 
 @dataclass
@@ -33,6 +34,8 @@ class AppConfig:
     version: str = CONFIG_VERSION
     # Live partials require streaming; off by default until WS is stable on Windows.
     live_partials: bool = False
+    stream_engine: str = "sherpa"
+    hybrid_final_correct: bool = True
     suppress_hotkey: bool = True  # capture Win+H so OS voice typing does not fire
     audible_cues: bool = True  # ding on record start/stop (batch shows no text until stop)
 
@@ -95,6 +98,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     if hk in UNSUPPORTED_HOTKEYS:
         hk = DEFAULT_HOTKEY
     cfg.hotkey = hk
+    engine = (cfg.stream_engine or "sherpa").strip().lower()
+    cfg.stream_engine = engine if engine in STREAM_ENGINES else "sherpa"
     cfg.version = CONFIG_VERSION
     return cfg
 

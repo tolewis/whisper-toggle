@@ -31,7 +31,7 @@ from whisper_toggle.config import AppConfig, app_data_dir, load_config, save_con
 from whisper_toggle.controller import State
 from whisper_toggle.device import resolve_device
 from whisper_toggle.icons import tray_icon, write_app_icon
-from whisper_toggle.live_typing import next_to_type
+from whisper_toggle.live_typing import hybrid_correction, next_to_type
 from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
@@ -85,6 +85,7 @@ class TrayApp:
         self._preview_thread: threading.Thread | None = None
         self._preview_batch_lock = threading.Lock()
         self._preview_confirmed = ""
+        self._hybrid_corrected = False
         self._owns_api = False
         self._cleanup_registered = False
         self._reload_path = app_data_dir() / "reload.signal"
@@ -161,6 +162,7 @@ class TrayApp:
         env["WHISPER_API_VERSION"] = "2.1.0"
         env["WHISPER_API_PRELOAD"] = "1"
         env["WHISPER_API_REQUIRE_SMOKE"] = "1"
+        env["WHISPER_STREAM_ENGINE"] = self.cfg.stream_engine
 
         for vendor_base in (
             Path(sys.argv[0]).resolve().parent / "vendor" / "whisper_streaming",
@@ -301,6 +303,7 @@ class TrayApp:
         # overlay is a separate opt-in.
         if self.cfg.streaming:
             self._typed_live = ""
+            self._hybrid_corrected = False
             threading.Thread(target=self._start_live_stream, daemon=True).start()
         elif self.cfg.live_partials:
             self._start_batch_preview_loop()
@@ -366,7 +369,8 @@ class TrayApp:
             failed = self.live.failed
             self.live = None
             if not failed and final:
-                # finalize already typed via callback; ensure idle
+                # finalize already typed via callback; optionally replace rough live text
+                self._apply_hybrid_final_correction(pcm)
                 if self.state == State.PROCESSING:
                     self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
                 return
@@ -378,6 +382,7 @@ class TrayApp:
         # If live streaming already typed text into the app, do NOT batch-insert
         # the whole transcript on top of it (that would duplicate everything).
         if self.cfg.streaming and getattr(self, "_typed_live", ""):
+            self._apply_hybrid_final_correction(pcm)
             self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
             return
 
@@ -460,6 +465,28 @@ class TrayApp:
         except Exception:
             log.exception("live type failed")
 
+    def _apply_hybrid_final_correction(self, pcm: bytes) -> None:
+        if not (self.cfg.streaming and self.cfg.hybrid_final_correct):
+            return
+        if getattr(self, "_hybrid_corrected", False):
+            return
+        live_typed = getattr(self, "_typed_live", "")
+        if not live_typed or not pcm or len(pcm) < 1000:
+            return
+        self._hybrid_corrected = True
+        try:
+            wav = MicRecorder().to_wav_bytes(pcm)
+            with self._preview_batch_lock:
+                batch_text = (self.api.batch(wav) or "").strip()
+            backspaces, append = hybrid_correction(live_typed, batch_text)
+            if backspaces:
+                self.kb.backspace(backspaces)
+            if append:
+                self.kb.type_text(append)
+            self._typed_live = batch_text
+        except Exception:
+            log.exception("hybrid final correction failed")
+
     def _on_confirmed(self, text: str) -> None:
         with self._partial_lock:
             if self._partial_timer is not None:
@@ -488,6 +515,8 @@ class TrayApp:
         try:
             if self.cfg.streaming:
                 self._type_live(text)          # type only the untyped tail
+                pcm = bytes(getattr(self, "_pcm_buffer", b""))
+                self._apply_hybrid_final_correction(pcm)
             else:
                 self.session.finalize(text)
         except Exception as exc:  # noqa: BLE001

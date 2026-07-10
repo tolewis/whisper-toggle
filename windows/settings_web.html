@@ -106,6 +106,8 @@
       <select id="device"></select></div>
     <div class="row"><div class="txt"><b>Model</b><small>Bigger = more accurate, a little slower. medium.en is a great fit for an NVIDIA GPU.</small></div>
       <select id="model"></select></div>
+    <div class="row"><div class="txt"><b>Live engine</b><small>Sherpa is streaming-native; Whisper streaming remains as fallback.</small></div>
+      <select id="stream_engine"></select></div>
   </div>
   </div>
 
@@ -116,6 +118,8 @@
       <label class="sw"><input type="checkbox" id="audible_cues"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Live streaming <span class="beta">BETA</span></b><small>Transcribe while you speak (higher CPU).</small></div>
       <label class="sw"><input type="checkbox" id="streaming"><span class="track"></span><span class="knob"></span></label></div>
+    <div class="row"><div class="txt"><b>Correct with accurate model at stop</b><small>Replace rough live text with the batch transcript.</small></div>
+      <label class="sw"><input type="checkbox" id="hybrid_final_correct"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Live preview overlay <span class="beta">BETA</span></b><small>Shows text as you speak; inserts once at the end.</small></div>
       <label class="sw"><input type="checkbox" id="live_partials"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Start with Windows</b><small>Launch automatically when you sign in.</small></div>
@@ -141,8 +145,8 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const BOOLS = ["audible_cues","streaming","live_partials","autostart"];
-  const TEXT  = ["hotkey","device","model","partial_debounce_ms","hardware_catchup_ms"];
+  const BOOLS = ["audible_cues","streaming","hybrid_final_correct","live_partials","autostart"];
+  const TEXT  = ["hotkey","device","model","stream_engine","partial_debounce_ms","hardware_catchup_ms"];
   let CHOICES = {};
 
   function fillSelect(el, values, current){
@@ -170,6 +174,7 @@
     const c = state.config; CHOICES = state.choices || {};
     fillSelect($("device"), CHOICES.device||["auto"], c.device_override);
     fillSelect($("model"), CHOICES.model||[""], c.model);
+    fillSelect($("stream_engine"), CHOICES.stream_engine||["sherpa"], c.stream_engine);
     $("hotkey").value = c.hotkey; renderChips(c.hotkey);
     $("hotkey").oninput = () => markChips($("hotkey").value.trim().toLowerCase());
     BOOLS.forEach(k => $(k).checked = !!c[k]);
@@ -184,6 +189,7 @@
   function collect(){
     const p = { hotkey:$("hotkey").value.trim().toLowerCase(),
       device_override:$("device").value, model:$("model").value,
+      stream_engine:$("stream_engine").value,
       partial_debounce_ms:+$("partial_debounce_ms").value||0,
       hardware_catchup_ms:+$("hardware_catchup_ms").value||0 };
     BOOLS.forEach(k => p[k] = $(k).checked);

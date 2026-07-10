@@ -50,6 +50,7 @@ except Exception:
     pass
 
 from faster_whisper import WhisperModel
+from whisper_toggle.sherpa_stream import SherpaStreamProcessor
 
 try:
     from whisper_toggle.logging_setup import setup_logging
@@ -287,6 +288,9 @@ class StreamingASRProcessor:
 
 
 def create_stream_processor(model_name: str, device: str, compute_type: str, language: str):
+    engine = env("WHISPER_STREAM_ENGINE", "sherpa").strip().lower()
+    if engine == "sherpa":
+        return SherpaStreamProcessor(model_name, device, compute_type, language)
     return StreamingASRProcessor(model_name, device, compute_type, language)
 
 

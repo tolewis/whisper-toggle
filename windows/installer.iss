@@ -45,6 +45,7 @@ Source: "..\build\stage\tray_app.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_gui.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_web.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_web.html"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\stage\get-sherpa-model.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\whisper_toggle\*"; DestDir: "{app}\whisper_toggle"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\build\stage\vendor\*"; DestDir: "{app}\vendor"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\build\stage\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
