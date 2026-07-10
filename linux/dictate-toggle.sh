@@ -19,8 +19,20 @@ DEFAULT_STREAM_CLIENT="$SCRIPT_DIR/whisper-stream-ws-client.py"
 [[ -x "$DEFAULT_STREAM_CLIENT" ]] || DEFAULT_STREAM_CLIENT="$SCRIPT_DIR/stream_ws_client.py"
 WHISPER_OSD_BIN="${WHISPER_OSD_BIN:-$DEFAULT_OSD_BIN}"
 WHISPER_STREAM_CLIENT="${WHISPER_STREAM_CLIENT:-$DEFAULT_STREAM_CLIENT}"
+# Recorder for the streaming (raw PCM) path. "auto" prefers pw-record so a
+# pipewire-only install works without ALSA; falls back to arecord. Override
+# with a specific binary name (e.g. arecord) if desired.
+WHISPER_STREAM_RECORDER="${WHISPER_STREAM_RECORDER:-auto}"
 
-WORK_DIR="${WHISPER_WORK_DIR:-/tmp/dictate-toggle}"
+# Prefer the per-user runtime dir (already 0700) over world-readable /tmp for
+# transcripts. WHISPER_WORK_DIR overrides.
+if [[ -n "${WHISPER_WORK_DIR:-}" ]]; then
+    WORK_DIR="$WHISPER_WORK_DIR"
+elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    WORK_DIR="$XDG_RUNTIME_DIR/dictate-toggle"
+else
+    WORK_DIR="/tmp/dictate-toggle"
+fi
 PID_FILE="$WORK_DIR/rec.pid"
 MODE_FILE="$WORK_DIR/mode"
 CLIENT_PID_FILE="$WORK_DIR/client.pid"
@@ -33,8 +45,6 @@ FINAL_FILE="$WORK_DIR/final.txt"
 LOCK_FILE="$WORK_DIR/lock"
 NOTIFY_ID=991337
 KILL_TIMEOUT=1
-
-mkdir -p "$WORK_DIR"
 
 notify() {
     local message="$1"
@@ -59,15 +69,10 @@ cleanup_lock() {
 }
 
 cleanup_stream_files() {
-    rm -f "$PCM_FIFO" "$OSD_FIFO" "$CLIENT_PID_FILE" "$OSD_PID_FILE" "$MODE_FILE"
+    # Also removes the transcript artifacts so nothing sensitive lingers on disk.
+    rm -f "$PCM_FIFO" "$OSD_FIFO" "$CLIENT_PID_FILE" "$OSD_PID_FILE" "$MODE_FILE" \
+        "$FINAL_FILE" "$STREAM_LOG"
 }
-
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-    notify "Busy, wait a moment" low
-    exit 0
-fi
-trap cleanup_lock EXIT
 
 is_recording() {
     [[ -f "$PID_FILE" ]] || return 1
@@ -76,33 +81,113 @@ is_recording() {
     kill -0 "$pid" 2>/dev/null
 }
 
-paste_text() {
-    local wm_class=""
-    local title=""
-    local target=""
-    local wid
-    if wid=$(xdotool getactivewindow 2>/dev/null); then
-        wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
+# True when running under a native Wayland session (no X11 tooling works).
+is_wayland() {
+    [[ -n "${WAYLAND_DISPLAY:-}" ]]
+}
+
+# Copy stdin to the clipboard using the session-appropriate tool. Degrades with
+# a notify-send message (never a silent no-op) when the required tool is absent.
+copy_to_clipboard() {
+    if is_wayland; then
+        if command -v wl-copy >/dev/null 2>&1; then
+            wl-copy
+        else
+            cat >/dev/null 2>&1 || true
+            notify "Install wl-clipboard (wl-copy) for Wayland clipboard" critical
+            return 1
+        fi
+    else
+        if command -v xclip >/dev/null 2>&1; then
+            xclip -selection clipboard
+        else
+            cat >/dev/null 2>&1 || true
+            notify "Install xclip for clipboard support" critical
+            return 1
+        fi
+    fi
+}
+
+# Echo "<wm_class> <title>" (lowercased) for the active window, or empty. On
+# Wayland there is no portable active-window query (GNOME blocks it), so we
+# gracefully degrade to an empty target and the default (non-terminal) paste.
+detect_window() {
+    if is_wayland; then
+        return 0
+    fi
+    local wid wm_class="" title=""
+    if command -v xdotool >/dev/null 2>&1 && wid=$(xdotool getactivewindow 2>/dev/null); then
+        if command -v xprop >/dev/null 2>&1; then
+            wm_class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | sed 's/.*= //' | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
+        fi
         title=$(xdotool getwindowname "$wid" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
     fi
-    target="$wm_class $title"
+    printf '%s %s' "$wm_class" "$title"
+}
+
+is_terminal_target() {
+    case "$1" in
+        *gnome-terminal*|*kgx*|*kitty*|*alacritty*|*foot*|*xterm*|*tilix*|*terminator*|*konsole*|*wezterm*|*st-256color*|*tmux*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Fire the paste keystroke (Ctrl+V, or Ctrl+Shift+V in terminals) via the
+# session-appropriate tool.
+paste_text() {
+    local target terminal=0
+    target=$(detect_window)
+    is_terminal_target "$target" && terminal=1
 
     sleep 0.05
 
-    case "$target" in
-        *gnome-terminal*|*kgx*|*kitty*|*alacritty*|*foot*|*xterm*|*tilix*|*terminator*|*konsole*|*wezterm*|*st-256color*|*tmux*)
-            xdotool key --clearmodifiers ctrl+shift+v
-            ;;
-        *)
-            xdotool key --clearmodifiers ctrl+v
-            ;;
-    esac
+    if is_wayland; then
+        if command -v wtype >/dev/null 2>&1; then
+            if (( terminal )); then
+                wtype -M ctrl -M shift -k v -m shift -m ctrl
+            else
+                wtype -M ctrl -k v -m ctrl
+            fi
+        else
+            notify "Install wtype for Wayland paste" critical
+            return 1
+        fi
+    else
+        if command -v xdotool >/dev/null 2>&1; then
+            if (( terminal )); then
+                xdotool key --clearmodifiers ctrl+shift+v
+            else
+                xdotool key --clearmodifiers ctrl+v
+            fi
+        else
+            notify "Install xdotool for paste support" critical
+            return 1
+        fi
+    fi
 }
 
 type_text() {
     local text="$1"
     sleep 0.05
-    xdotool type --clearmodifiers --delay 0 "$text"
+    if is_wayland; then
+        if command -v wtype >/dev/null 2>&1; then
+            wtype -- "$text"
+        else
+            notify "Install wtype for Wayland typing" critical
+            return 1
+        fi
+    else
+        if command -v xdotool >/dev/null 2>&1; then
+            xdotool type --clearmodifiers --delay 0 "$text"
+        else
+            notify "Install xdotool for typing support" critical
+            return 1
+        fi
+    fi
 }
 
 start_recording_batch() {
@@ -181,7 +266,7 @@ stop_batch() {
         exit 0
     fi
 
-    printf '%s' "$text" | xclip -selection clipboard
+    printf '%s' "$text" | copy_to_clipboard
     paste_text
 
     local chars=${#text}
@@ -210,7 +295,43 @@ stop_osd_if_needed() {
     wait "$osd_pid" 2>/dev/null || true
 }
 
+# Echo the streaming recorder to use, or return nonzero if none is available.
+# "auto" prefers pw-record (pipewire) then arecord (ALSA). A specific override
+# must be present on PATH or resolution fails (so we can fall back to batch).
+resolve_stream_recorder() {
+    if [[ "$WHISPER_STREAM_RECORDER" != "auto" ]]; then
+        command -v "$WHISPER_STREAM_RECORDER" >/dev/null 2>&1 || return 1
+        printf '%s' "$WHISPER_STREAM_RECORDER"
+        return 0
+    fi
+    if command -v pw-record >/dev/null 2>&1; then
+        printf 'pw-record'
+        return 0
+    fi
+    if command -v arecord >/dev/null 2>&1; then
+        printf 'arecord'
+        return 0
+    fi
+    return 1
+}
+
+# Launch the given recorder writing headerless raw S16LE mono 16k PCM to the
+# PCM fifo, backgrounded. pw-record streams to stdout (`-`) with no header;
+# arecord uses its raw mode.
+launch_raw_recorder() {
+    local recorder="$1"
+    case "$recorder" in
+        pw-record)
+            pw-record --rate 16000 --channels 1 --format s16 - 9>&- > "$PCM_FIFO" &
+            ;;
+        *)
+            "$recorder" -t raw -f S16_LE -r 16000 -c 1 - 9>&- > "$PCM_FIFO" &
+            ;;
+    esac
+}
+
 start_streaming() {
+    local recorder="${1:-pw-record}"
     rm -f "$WAV_FILE" "$FINAL_FILE" "$STREAM_LOG" "$PCM_FIFO"
     cleanup_stream_files
     mkfifo "$PCM_FIFO"
@@ -239,26 +360,17 @@ start_streaming() {
     local client_pid=$!
     echo "$client_pid" > "$CLIENT_PID_FILE"
 
-    arecord \
-        -t raw \
-        -f S16_LE \
-        -r 16000 \
-        -c 1 \
-        - 9>&- > "$PCM_FIFO" &
+    launch_raw_recorder "$recorder"
 
     local rec_pid=$!
     sleep 0.2
     if ! kill -0 "$rec_pid" 2>/dev/null; then
-        if ! kill -0 "$client_pid" 2>/dev/null; then
-            wait "$client_pid" 2>/dev/null || true
-            cleanup_stream_files
-            echo "[dictate] streaming unavailable within 1s, falling back to v1 batch" >&2
-            start_recording_batch
-            return 0
-        fi
         kill "$client_pid" 2>/dev/null || true
+        wait "$client_pid" 2>/dev/null || true
         cleanup_stream_files
-        die "pw-record failed to start"
+        echo "[dictate] recorder ($recorder) failed to start, falling back to batch" >&2
+        start_recording_batch
+        return 0
     fi
 
     sleep 0.8
@@ -322,7 +434,7 @@ stop_streaming() {
         exit 0
     fi
 
-    printf '%s' "$text" | xclip -selection clipboard
+    printf '%s' "$text" | copy_to_clipboard
     paste_text
     local chars=${#text}
     local preview="${text:0:60}"
@@ -330,21 +442,45 @@ stop_streaming() {
     notify "$preview  (${chars} chars)"
 }
 
-mode="batch"
-if [[ -f "$MODE_FILE" ]]; then
-    mode=$(<"$MODE_FILE")
-fi
+main() {
+    mkdir -p "$WORK_DIR"
+    # Transcripts are private; keep the work dir owner-only.
+    chmod 700 "$WORK_DIR" 2>/dev/null || true
 
-if is_recording; then
-    if [[ "$mode" == "stream" ]]; then
-        stop_streaming
-    else
-        stop_batch
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        notify "Busy, wait a moment" low
+        exit 0
     fi
-else
-    if [[ "$WHISPER_STREAMING" == "1" ]]; then
-        start_streaming
-    else
-        start_recording_batch
+    trap cleanup_lock EXIT
+
+    local mode="batch"
+    if [[ -f "$MODE_FILE" ]]; then
+        mode=$(<"$MODE_FILE")
     fi
+
+    if is_recording; then
+        if [[ "$mode" == "stream" ]]; then
+            stop_streaming
+        else
+            stop_batch
+        fi
+    else
+        local recorder=""
+        if [[ "$WHISPER_STREAMING" == "1" ]] && recorder=$(resolve_stream_recorder); then
+            start_streaming "$recorder"
+        else
+            if [[ "$WHISPER_STREAMING" == "1" ]]; then
+                echo "[dictate] no streaming recorder available, using batch" >&2
+                notify "Streaming recorder missing, using batch" low
+            fi
+            start_recording_batch
+        fi
+    fi
+}
+
+# Only run the toggle when executed directly; sourcing (e.g. from tests)
+# exposes the helper functions without side effects.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
 fi

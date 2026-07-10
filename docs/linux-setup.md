@@ -5,7 +5,11 @@ Tested on Ubuntu 24.04, GNOME, PipeWire, GTX 1060 6GB.
 ## Prerequisites
 
 - GNOME desktop (Wayland or X11)
-- PipeWire audio (`pw-record` available)
+- PipeWire audio (`pw-record` available) — used for both the streaming and
+  batch recorders, so no ALSA/`arecord` is required. Streaming auto-selects
+  `pw-record`, falling back to `arecord` if present; override with
+  `WHISPER_STREAM_RECORDER`. If no streaming recorder is available the script
+  cleanly falls back to the batch path.
 - NVIDIA GPU with CUDA (or set `WHISPER_API_DEVICE=cpu`)
 - Python 3.9+
 
@@ -14,8 +18,23 @@ Tested on Ubuntu 24.04, GNOME, PipeWire, GTX 1060 6GB.
 ### 1. System packages
 
 ```bash
-sudo apt install xdotool xclip x11-utils libnotify-bin curl pipewire-tools
+# Common
+sudo apt install libnotify-bin curl pipewire-tools
+
+# X11 sessions
+sudo apt install xdotool xclip x11-utils
+
+# Wayland sessions (native Wayland, e.g. GNOME on Wayland)
+sudo apt install wtype wl-clipboard
 ```
+
+The dictation script auto-detects the session via `$WAYLAND_DISPLAY`: under
+Wayland it uses `wtype` for keystrokes and `wl-copy`/`wl-paste` for the
+clipboard; under X11 it uses `xdotool` and `xclip`. If a required tool is
+missing it shows a `notify-send` prompt instead of silently doing nothing.
+Note: native Wayland blocks active-window queries, so terminal auto-detection
+(Ctrl+Shift+V vs Ctrl+V) is X11-only; on Wayland the standard Ctrl+V paste is
+used everywhere.
 
 ### 2. Python venv
 

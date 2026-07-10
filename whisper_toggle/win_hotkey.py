@@ -13,7 +13,14 @@ import ctypes
 import ctypes.wintypes as wintypes
 import logging
 import threading
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
+
+from whisper_toggle.win_voice_typing import (
+    default_marker_store,
+    disable_voice_typing,
+    reconcile_on_launch,
+    restore_voice_typing,
+)
 
 log = logging.getLogger("whisper-toggle.tray")
 
@@ -66,13 +73,62 @@ kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 
 def _voice_typing_reg_ops():
+    """Registry ops as (root, path, name, new_value, new_type) 5-tuples."""
     import winreg
 
     return [
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "IsVoiceTypingKeyEnabled", 0),
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "VoiceTypingEnabled", 0),
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings\VoiceTyping", "EnableLauncher", 0),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "IsVoiceTypingKeyEnabled", 0, winreg.REG_DWORD),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings", "VoiceTypingEnabled", 0, winreg.REG_DWORD),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Input\Settings\VoiceTyping", "EnableLauncher", 0, winreg.REG_DWORD),
     ]
+
+
+class _WinregAdapter:
+    """Thin Windows-only RegistryPort over winreg. VALIDATE ON JUBIKU.
+
+    The reconcile/disable/restore decision logic is unit tested via
+    win_voice_typing; this adapter is the only Windows-API-touching part.
+    """
+
+    def read(self, root: Any, path: str, name: str):
+        import winreg
+
+        try:
+            key = winreg.OpenKey(root, path, 0, winreg.KEY_READ)
+        except OSError:
+            return None
+        try:
+            try:
+                value, typ = winreg.QueryValueEx(key, name)
+                return (value, typ)
+            except OSError:
+                return None
+        finally:
+            winreg.CloseKey(key)
+
+    def write(self, root: Any, path: str, name: str, value: Any, type_: Any) -> None:
+        import winreg
+
+        key = winreg.CreateKeyEx(root, path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+        try:
+            winreg.SetValueEx(key, name, 0, type_, value)
+        finally:
+            winreg.CloseKey(key)
+
+    def delete(self, root: Any, path: str, name: str) -> None:
+        import winreg
+
+        try:
+            key = winreg.CreateKeyEx(root, path, 0, winreg.KEY_WRITE)
+        except OSError:
+            return
+        try:
+            try:
+                winreg.DeleteValue(key, name)
+            except OSError:
+                pass
+        finally:
+            winreg.CloseKey(key)
 
 
 class WinHotkeyOwner:
@@ -83,7 +139,9 @@ class WinHotkeyOwner:
         self._thread: Optional[threading.Thread] = None
         self._tid = 0
         self._proc = None
-        self._saved_reg: list[tuple] = []
+        self._registry = _WinregAdapter()
+        self._marker = default_marker_store()
+        self._reconciled = False
         self._lock = threading.Lock()
         self._ready = threading.Event()
         self._last_fire = 0.0
@@ -93,6 +151,16 @@ class WinHotkeyOwner:
         return bool(self._enabled and self._hook)
 
     def start(self) -> bool:
+        # Reconcile-on-launch: if a prior run disabled OS Voice Typing and died
+        # before restoring (crash / TerminateProcess / uninstaller taskkill),
+        # put the saved originals back before we touch anything.
+        if not self._reconciled:
+            self._reconciled = True
+            try:
+                if reconcile_on_launch(self._registry, self._marker):
+                    log.info("reconciled leftover Voice Typing marker on launch")
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Voice Typing reconcile-on-launch failed: %s", exc)
         if self._thread and self._thread.is_alive():
             return True
         self._ready.clear()
@@ -194,43 +262,18 @@ class WinHotkeyOwner:
 
     def _disable_os_voice_typing(self) -> None:
         try:
-            import winreg
+            ops = _voice_typing_reg_ops()  # imports winreg; no-op off Windows
         except ImportError:
             return
-        self._saved_reg = []
-        for root, path, name, value in _voice_typing_reg_ops():
-            try:
-                key = winreg.CreateKeyEx(root, path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
-            except OSError:
-                continue
-            try:
-                try:
-                    prev, typ = winreg.QueryValueEx(key, name)
-                except OSError:
-                    prev, typ = None, winreg.REG_DWORD
-                self._saved_reg.append((root, path, name, prev, typ))
-                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
-            except OSError as exc:
-                log.debug("reg set failed %s\\%s: %s", path, name, exc)
-            finally:
-                winreg.CloseKey(key)
+        try:
+            # Persists the originals to the marker BEFORE flipping values, so a
+            # crash right after cannot lose them (see win_voice_typing).
+            disable_voice_typing(self._registry, self._marker, ops)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("disable voice typing failed: %s", exc)
 
     def _restore_os_voice_typing(self) -> None:
         try:
-            import winreg
-        except ImportError:
-            return
-        for root, path, name, prev, typ in self._saved_reg:
-            try:
-                key = winreg.CreateKeyEx(root, path, 0, winreg.KEY_WRITE)
-                if prev is None:
-                    try:
-                        winreg.DeleteValue(key, name)
-                    except OSError:
-                        pass
-                else:
-                    winreg.SetValueEx(key, name, 0, typ, prev)
-                winreg.CloseKey(key)
-            except OSError as exc:
-                log.debug("reg restore failed %s\\%s: %s", path, name, exc)
-        self._saved_reg = []
+            restore_voice_typing(self._registry, self._marker)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("restore voice typing failed: %s", exc)

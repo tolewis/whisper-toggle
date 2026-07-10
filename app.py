@@ -77,7 +77,7 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-APP_VERSION = env("WHISPER_API_VERSION", "2.0.4")
+APP_VERSION = env("WHISPER_API_VERSION", "2.1.0")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 
@@ -141,6 +141,19 @@ def get_model(model_name: str, device: str, compute_type: str) -> WhisperModel:
     return m
 
 
+def _streaming_enabled() -> bool:
+    """Whether the live streaming endpoint is advertised as available.
+
+    Driven by ``WHISPER_API_STREAMING`` (default enabled) so an operator who
+    turns streaming off sees it reflected in ``/v1/runtime`` rather than a
+    hardcoded literal. Read at request time so it tracks the live env.
+    """
+    raw = os.getenv("WHISPER_API_STREAMING")
+    if raw is None or raw.strip() == "":
+        return True
+    return raw.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -164,7 +177,7 @@ def runtime():
         "model": DEFAULT_MODEL,
         "language": DEFAULT_LANG,
         "backend": backend,
-        "streaming": True,
+        "streaming": _streaming_enabled(),
         "stream_sample_rate": STREAM_SAMPLE_RATE,
         "cuda12_runtime_present": cuda12_runtime_present,
         "models_cached": [list(k) for k in _model_cache.keys()],

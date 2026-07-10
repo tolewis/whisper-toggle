@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="drives the bash Linux-desktop e2e (xdotool/xclip/pw-record mocks)",
+)
 
 
 def test_dictate_toggle_v2_shell_round_trip():

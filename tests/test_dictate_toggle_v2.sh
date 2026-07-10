@@ -54,7 +54,9 @@ chmod +x "$MOCK_BIN/xdotool"
 cat > "$MOCK_BIN/pw-record" <<'SH'
 #!/usr/bin/env bash
 trap 'exit 0' INT TERM
-if printf '%s\n' "$*" | grep -q -- '--raw'; then
+out="${@: -1}"
+# Streaming target is stdout ("-"): emit headerless raw PCM continuously.
+if [[ "$out" == "-" ]]; then
     while true; do
         for _ in $(seq 1 1600); do
             printf '\0\0'
@@ -62,7 +64,7 @@ if printf '%s\n' "$*" | grep -q -- '--raw'; then
         sleep 0.05
     done
 fi
-out="${@: -1}"
+# Batch target is a file path: write a >1KB WAV-ish blob then idle.
 python3 - "$out" <<'PY'
 import sys
 from pathlib import Path
@@ -120,6 +122,9 @@ MOCK_WS_PORT="$PORT" python3 "$TMP/mock_ws.py" &
 SERVER_PID=$!
 sleep 0.3
 
+# Force the X11 code path deterministically regardless of the host session.
+unset WAYLAND_DISPLAY
+
 export PATH="$MOCK_BIN:$PATH"
 export XDOTOOL_LOG="$TMP/xdotool.log"
 export XCLIP_LOG="$TMP/xclip.log"
@@ -147,3 +152,19 @@ sleep 0.5
 "$REPO_ROOT/linux/dictate-toggle.sh"
 
 grep -q 'key --clearmodifiers ctrl+shift+v' "$XDOTOOL_LOG"
+
+# L4: transcript privacy. The work dir must be private (0700) and the
+# transcript files must not linger after a completed run.
+work_mode="$(stat -c '%a' "$WHISPER_WORK_DIR")"
+if [[ "$work_mode" != "700" ]]; then
+    echo "FAIL: work dir mode is $work_mode, expected 700" >&2
+    exit 1
+fi
+if [[ -e "$WHISPER_WORK_DIR/final.txt" ]]; then
+    echo "FAIL: final.txt lingered after run" >&2
+    exit 1
+fi
+if [[ -e "$WHISPER_WORK_DIR/stream.jsonl" ]]; then
+    echo "FAIL: stream.jsonl lingered after run" >&2
+    exit 1
+fi

@@ -111,6 +111,11 @@ class LocalApiClient:
 class LiveStreamSession:
     """Open a streaming WS and push PCM while the user is speaking."""
 
+    # Sentinel pushed onto the send queue to wake the send loop when the recv
+    # loop ends for a non-final reason (server error / early close), so the
+    # worker thread tears down promptly instead of blocking on queue.get().
+    _ABORT = object()
+
     def __init__(
         self,
         stream_url: str,
@@ -160,7 +165,10 @@ class LiveStreamSession:
         try:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
         except Exception:
-            pass
+            # The event loop is gone (worker died): surface the failure and
+            # release any waiter instead of silently dropping audio forever.
+            self._failed = True
+            self._done.set()
 
     def end(self) -> str:
         """Signal end-of-audio; wait for final. Returns final text if any."""
@@ -206,6 +214,11 @@ class LiveStreamSession:
                 try:
                     while True:
                         item = await self._queue.get()
+                        if item is self._ABORT:
+                            # recv loop failed (error frame / early close):
+                            # unblock and unwind instead of waiting forever.
+                            self._done.set()
+                            return
                         if isinstance(item, dict):
                             await ws.send(json.dumps(item))
                             if item.get("type") == "end":
@@ -231,6 +244,18 @@ class LiveStreamSession:
             self._ready.set()
             self._done.set()
 
+    def _abort(self) -> None:
+        """Wake the send loop so the worker thread tears down on failure.
+
+        Runs on the event-loop thread (called from ``_recv_loop``), so the
+        queue can be poked directly. Idempotent and best-effort.
+        """
+        if self._queue is not None:
+            try:
+                self._queue.put_nowait(self._ABORT)
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _recv_loop(self, ws) -> None:
         try:
             async for message in ws:
@@ -253,7 +278,14 @@ class LiveStreamSession:
                 elif kind == "error":
                     self._failed = True
                     self.on_error(payload.get("error") or "stream error")
+                    self._abort()
                     return
+            # The socket closed before any ``final`` frame: treat as a failure
+            # and unblock the send loop rather than leaving it hung.
+            self._failed = True
+            self.on_error("stream closed before final")
+            self._abort()
         except Exception as exc:  # noqa: BLE001
             self._failed = True
             self.on_error(str(exc))
+            self._abort()

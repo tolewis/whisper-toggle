@@ -10,7 +10,76 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from whisper_toggle.win_paste import ClipboardInjector
+
 log = logging.getLogger("whisper-toggle.tray")
+
+
+class _RealClock:
+    """ClockPort over the stdlib clock (kept out of the injector for testing)."""
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    def sleep(self, dt: float) -> None:
+        time.sleep(dt)
+
+
+class _PyperclipClipboardPort:
+    """ClipboardPort over pyperclip. Only text clipboards are preserved."""
+
+    def __init__(self, pyperclip):
+        self._pc = pyperclip
+
+    def get(self):
+        try:
+            return self._pc.paste()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def set(self, value) -> None:
+        self._pc.copy(value)
+
+
+class _ChordPaster:
+    """PasterPort that fires the real Ctrl+V chord with fallbacks.
+
+    consumed() is a best-effort settle window: Windows offers no reliable signal
+    that a foreground app has READ the clipboard, so we hold our text for a short
+    bounded window before allowing the restore. VALIDATE/tune ON JUBIKU.
+    """
+
+    def __init__(self, adapter, is_terminal: bool, text: str, settle: float = 0.25, pre_settle: float = 0.10):
+        self.adapter = adapter
+        self.is_terminal = is_terminal
+        self.text = text
+        self.settle = settle
+        self.pre_settle = pre_settle
+        self._t0: float | None = None
+
+    def paste(self) -> None:
+        time.sleep(self.pre_settle)  # let the clipboard settle before pasting
+        try:
+            if self.is_terminal:
+                self.adapter._send_ctrl_shift_v_sendinput()
+                log.info("pasted %d chars via SendInput ctrl+shift+v into terminal", len(self.text))
+            else:
+                self.adapter._send_ctrl_v_sendinput()
+                log.info("pasted %d chars via SendInput ctrl+v", len(self.text))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SendInput paste failed: %s", exc)
+            try:
+                self.adapter._keyboard.send("ctrl+v")
+                log.info("pasted %d chars via keyboard ctrl+v", len(self.text))
+            except Exception as exc2:  # noqa: BLE001
+                log.error("keyboard ctrl+v failed: %s - typing directly", exc2)
+                self.adapter.type_text(self.text)  # last resort; may raise
+        self._t0 = time.monotonic()
+
+    def consumed(self) -> bool:
+        if self._t0 is None:
+            return False
+        return (time.monotonic() - self._t0) >= self.settle
 
 
 class NativeHotkeyHandle:
@@ -218,12 +287,6 @@ class KeyboardAdapter:
         import pyperclip
 
         self._wait_modifiers_up()
-        previous = None
-        if restore_clipboard:
-            try:
-                previous = pyperclip.paste()
-            except Exception:
-                previous = None
 
         target = self._foreground_window_info() if sys.platform.startswith("win") else {}
         if self._is_terminal_target(target):
@@ -237,52 +300,21 @@ class KeyboardAdapter:
             except Exception as exc:  # noqa: BLE001
                 log.warning("terminal direct type failed for %s: %s", target, exc)
 
+        # Clipboard + paste with a race-free restore: the previous clipboard is
+        # only restored AFTER the paste is observed to have consumed our text
+        # (or a bounded poll elapses), never on a fixed timer racing the paste.
+        injector = ClipboardInjector(
+            _PyperclipClipboardPort(pyperclip),
+            _ChordPaster(self, self._is_terminal_target(target), text),
+            _RealClock(),
+            max_wait=1.5,
+            poll_interval=0.03,
+        )
         try:
-            pyperclip.copy(text)
+            injector.inject(text, restore=restore_clipboard)
         except Exception as exc:  # noqa: BLE001
-            log.error("clipboard copy failed: %s - falling back to write()", exc)
+            log.error("clipboard inject failed (%s) - falling back to write()", exc)
             self.type_text(text)
-            return
-
-        time.sleep(0.10)
-        pasted = False
-        try:
-            if self._is_terminal_target(target):
-                self._send_ctrl_shift_v_sendinput()
-                log.info("pasted %d chars via SendInput ctrl+shift+v into terminal", len(text))
-            else:
-                self._send_ctrl_v_sendinput()
-                log.info("pasted %d chars via SendInput ctrl+v", len(text))
-            pasted = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning("SendInput paste failed: %s", exc)
-
-        if not pasted:
-            try:
-                self._keyboard.send("ctrl+v")
-                pasted = True
-                log.info("pasted %d chars via keyboard ctrl+v", len(text))
-            except Exception as exc:  # noqa: BLE001
-                log.error("keyboard ctrl+v failed: %s", exc)
-
-        if not pasted:
-            try:
-                self.type_text(text)
-                log.info("injected %d chars via write()", len(text))
-            except Exception:
-                log.exception("all inject methods failed")
-                raise
-
-        if restore_clipboard and previous is not None:
-            # Restore previous clipboard after a beat so paste can complete
-            def _restore():
-                time.sleep(0.4)
-                try:
-                    pyperclip.copy(previous)
-                except Exception:
-                    pass
-
-            threading.Thread(target=_restore, daemon=True).start()
 
     def _send_ctrl_v_sendinput(self) -> None:
         """Low-level Ctrl+V independent of the keyboard hook stack."""

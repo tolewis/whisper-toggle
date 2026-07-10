@@ -166,3 +166,59 @@ def test_paste_uses_final_text():
     ctl.toggle()
     ctl.toggle()
     assert typer.events[-1] == ("final", "ship it")
+
+
+# ── A5 / H1: the toggle lock must be held for the whole call ────────────────
+# Old code released the lock during transcription and re-acquired it after,
+# leaving a window (state IDLE, lock free) where a re-entrant/concurrent toggle
+# could start a SECOND recording. Reproduced deterministically by toggling again
+# from the on_state IDLE callback that fires at exactly that window.
+
+def test_no_reentrant_double_start_at_finalize_window():
+    starts = {"n": 0}
+
+    class CountingAudio(FakeAudio):
+        def start(self):
+            starts["n"] += 1
+            super().start()
+
+    audio = CountingAudio()
+    api = FakeApi()
+    typer = FakeTyper()
+    cfg = ControllerConfig(streaming=False, min_audio_bytes=100,
+                           partial_debounce_ms=0, hardware_catchup_ms=0)
+
+    fired = {"done": False}
+
+    def on_state(state, msg):
+        # Fire ONE re-entrant toggle the instant we finish processing.
+        if state == State.IDLE and msg == "Ready" and not fired["done"]:
+            fired["done"] = True
+            ctl.toggle()
+
+    ctl = Controller(api=api, audio=audio, typer=typer, config=cfg, on_state=on_state)
+    ctl.toggle()  # IDLE -> RECORDING (start #1)
+    ctl.toggle()  # RECORDING -> PROCESSING -> IDLE (fires the re-entrant toggle)
+
+    # The re-entrant toggle must be a no-op: exactly one recording ever started.
+    assert starts["n"] == 1
+
+
+def test_stream_commits_confirmed_when_no_final_frame():
+    """If the server closes without a `final`, the confirmed text must still be
+    typed instead of silently dropped."""
+
+    class NoFinalApi(FakeApi):
+        def stream(self, pcm, on_partial, on_confirmed, on_final):
+            self.stream_calls += 1
+            on_partial("hello")
+            on_confirmed("hello world")
+            # server ends the stream WITHOUT calling on_final
+
+    ctl, api, _, typer = make_controller(api=NoFinalApi(), streaming=True)
+    ctl.toggle()
+    ctl.toggle()
+    finals = [e for e in typer.events if e[0] == "final"]
+    assert finals, "no final commit happened despite confirmed text"
+    assert finals[-1] == ("final", "hello world")
+    assert ctl.state == State.IDLE

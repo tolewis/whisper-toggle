@@ -2,8 +2,13 @@ name: Build Windows Installer
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -11,24 +16,24 @@ jobs:
     runs-on: [self-hosted, linux, tolewis-only]
     steps:
       - uses: actions/checkout@v4
-      - name: Install dev deps (venv if present, else user pip)
+      - name: Install dev deps (isolated venv from requirements-dev.txt)
         shell: bash
         run: |
-          if [[ -x /home/tlewis/.venvs/whisper/bin/python ]]; then
-            PY=/home/tlewis/.venvs/whisper/bin/python
-          else
-            PY=python3
-            $PY -m pip install --user -q -r requirements-dev.txt Pillow
-          fi
-          $PY -m pip install -q pytest httpx anyio pytest-asyncio Pillow 2>/dev/null || true
-          echo "PY=$PY" >> "$GITHUB_ENV"
+          python3 -m venv .venv-ci
+          . .venv-ci/bin/activate
+          python -m pip install -q --upgrade pip
+          python -m pip install -q -r requirements-dev.txt
       - name: Pytest
         shell: bash
         run: |
-          PYTHONPATH=. ${PY:-python3} -m pytest tests/ -q --tb=short
+          . .venv-ci/bin/activate
+          PYTHONPATH=. python -m pytest tests/ -q --tb=short
 
   build-windows:
     needs: test-linux
+    # Only build/publish the installer for tag releases; main pushes and PRs
+    # run the Linux test job above as their gate.
+    if: startsWith(github.ref, 'refs/tags/')
     # Prefer jubiku self-hosted; fall back label set used by LE/Orchestrate hosts
     runs-on: [self-hosted, windows, tolewis-only]
     steps:

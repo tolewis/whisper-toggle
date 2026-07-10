@@ -1,20 +1,20 @@
-; installer.iss - Inno Setup script for Whisper Toggle v2.0.4
+; installer.iss - Inno Setup script for Whisper Toggle v2.1.0
 ;
 ; Build:
 ;   1. powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-;   2. ISCC compiles this into WhisperToggle-Setup-2.0.4.exe
+;   2. ISCC compiles this into WhisperToggle-Setup-2.1.0.exe
 
 [Setup]
 AppId={{A7D3F2E1-B8C4-4F5A-9E6D-1C2B3A4F5E6D}
 AppName=Whisper Toggle
-AppVersion=2.0.4
-AppVerName=Whisper Toggle 2.0.4
+AppVersion=2.1.0
+AppVerName=Whisper Toggle 2.1.0
 AppPublisher=Tim Lewis
 AppPublisherURL=https://github.com/tolewis/Whisper-Toggle
 AppSupportURL=https://github.com/tolewis/Whisper-Toggle/issues
 DefaultDirName={localappdata}\Whisper Toggle
 DefaultGroupName=Whisper Toggle
-OutputBaseFilename=WhisperToggle-Setup-2.0.4
+OutputBaseFilename=WhisperToggle-Setup-2.1.0
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\assets\icon.ico
 Compression=lzma2/ultra64
@@ -107,8 +107,13 @@ begin
 end;
 
 [UninstallRun]
-Filename: "taskkill.exe"; \
-    Parameters: "/F /IM pythonw.exe"; \
+; Stop ONLY the python(w) processes that are running from THIS install dir
+; ({app}), matched by their real ExecutablePath. Never an image-wide taskkill
+; by image name -- that would kill every unrelated python/pythonw on the box.
+; NB: literal PowerShell "{" is escaped as "{{" for Inno; "{app}" stays a
+; single-brace Inno constant so it expands to the install path.
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and $_.ExecutablePath -like '{app}\*' } | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } """; \
     Flags: runhidden; \
     RunOnceId: "KillWhisperToggle"
 
