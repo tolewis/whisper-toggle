@@ -32,6 +32,7 @@ class FakeRecognizer:
         self.endpoint = False
         self.decode_calls = 0
         self.reset_calls = 0
+        self.result_as_string = False
 
     def create_stream(self):
         return self.stream
@@ -43,6 +44,8 @@ class FakeRecognizer:
         self.decode_calls += 1
 
     def get_result(self, stream):
+        if self.result_as_string:
+            return self.text
         return FakeResult(self.text)
 
     def is_endpoint(self, stream):
@@ -77,6 +80,16 @@ def test_sherpa_process_returns_partial_then_confirmed_on_endpoint():
     assert confirmed == {"type": "confirmed", "text": "hello world"}
     assert partial is None
     assert recognizer.reset_calls == 1
+
+
+def test_sherpa_process_accepts_real_string_result_shape():
+    recognizer = FakeRecognizer()
+    recognizer.result_as_string = True
+    processor = SherpaStreamProcessor("model", "cpu", "int8", "en", recognizer=recognizer)
+
+    recognizer.text = "hello"
+
+    assert processor.process() == (None, {"type": "partial", "text": "hello"})
 
 
 def test_sherpa_finish_flushes_and_returns_accumulated_text():

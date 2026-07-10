@@ -72,6 +72,8 @@ class SherpaStreamProcessor:
 
     def _result_text(self) -> str:
         result = self.recognizer.get_result(self.stream)
+        if isinstance(result, str):
+            return result.strip()
         return (getattr(result, "text", "") or "").strip()
 
     @staticmethod
