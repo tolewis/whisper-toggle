@@ -22,28 +22,47 @@ class LivePreviewOverlay:
     _queue: "queue.Queue[str | None]" = field(default_factory=queue.Queue, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
     _started: bool = field(default=False, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+
+    def _ensure_worker_locked(self) -> "queue.Queue[str | None]":
+        """Guarantee exactly one live worker and return its queue.
+
+        Caller must hold ``self._lock``. A worker is spawned only when none is
+        alive, so a ``stop()`` racing an ``update()`` (or several concurrent
+        first ``update()`` calls) can never start a second Tk mainloop thread.
+        A fresh queue is handed to each new worker so a leftover ``None``
+        sentinel from a prior ``stop()`` cannot immediately kill it.
+        """
+        self._started = True
+        if self._thread is not None and self._thread.is_alive():
+            return self._queue
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run, name="live-preview-overlay", daemon=True
+        )
+        self._thread.start()
+        return self._queue
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._started = True
-        self._thread = threading.Thread(target=self._run, name="live-preview-overlay", daemon=True)
-        self._thread.start()
+        with self._lock:
+            self._ensure_worker_locked()
 
     def update(self, text: str) -> None:
-        if not self._started:
-            self.start()
+        with self._lock:
+            q = self._ensure_worker_locked()
         try:
-            self._queue.put_nowait(text or "")
+            q.put_nowait(text or "")
         except Exception:
             pass
 
     def stop(self) -> None:
-        self._started = False
-        try:
-            self._queue.put_nowait(None)
-        except Exception:
-            pass
+        with self._lock:
+            self._started = False
+            if self._thread is not None and self._thread.is_alive():
+                try:
+                    self._queue.put_nowait(None)
+                except Exception:
+                    pass
 
     def _run(self) -> None:
         try:
