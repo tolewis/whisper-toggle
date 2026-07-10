@@ -139,3 +139,24 @@ def test_create_stream_processor_uses_whisper_streaming_fallback(monkeypatch):
         whisper_app.create_stream_processor("m", "cpu", "int8", "en"),
         FakeWhisperStreaming,
     )
+
+
+def test_resolve_sherpa_model_dir_env_override():
+    from whisper_toggle.sherpa_stream import resolve_sherpa_model_dir
+    assert str(resolve_sherpa_model_dir(env=r"C:\some\model")) == r"C:\some\model"
+
+
+def test_resolve_sherpa_model_dir_auto_discovers_encoder(tmp_path):
+    from whisper_toggle.sherpa_stream import resolve_sherpa_model_dir
+    models = tmp_path / "models"
+    good = models / "sherpa-en"
+    good.mkdir(parents=True)
+    (good / "encoder.onnx").write_bytes(b"x")
+    assert resolve_sherpa_model_dir(env="", models_root=models) == good
+
+
+def test_resolve_sherpa_model_dir_raises_when_missing(tmp_path):
+    import pytest
+    from whisper_toggle.sherpa_stream import resolve_sherpa_model_dir
+    with pytest.raises(RuntimeError):
+        resolve_sherpa_model_dir(env="", models_root=tmp_path / "nope")

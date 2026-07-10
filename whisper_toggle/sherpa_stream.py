@@ -12,6 +12,33 @@ import numpy as np
 SAMPLE_RATE = 16000
 
 
+def resolve_sherpa_model_dir(env: Optional[str] = None, models_root=None) -> Path:
+    """Locate the sherpa transducer model without requiring an env var.
+
+    Priority: WHISPER_SHERPA_MODEL_DIR if set, else the first sub-directory
+    under the app data ``models/`` folder that contains an ``encoder.onnx``.
+    This lets the bundled/downloaded model be found automatically, so the app
+    works when launched from the Start Menu (which does not always propagate a
+    freshly-set user env var).
+    """
+    env_dir = env if env is not None else os.getenv("WHISPER_SHERPA_MODEL_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if models_root is None:
+        from whisper_toggle.config import app_data_dir
+
+        models_root = app_data_dir() / "models"
+    models_root = Path(models_root)
+    if models_root.is_dir():
+        for sub in sorted(models_root.iterdir()):
+            if sub.is_dir() and (sub / "encoder.onnx").exists():
+                return sub
+    raise RuntimeError(
+        "No sherpa model found. Set WHISPER_SHERPA_MODEL_DIR or place a model "
+        f"(with encoder.onnx) under {models_root}."
+    )
+
+
 class SherpaStreamProcessor:
     def __init__(
         self,
@@ -80,10 +107,7 @@ class SherpaStreamProcessor:
     def _build_recognizer(device: str):
         import sherpa_onnx
 
-        model_dir_raw = os.getenv("WHISPER_SHERPA_MODEL_DIR")
-        if not model_dir_raw:
-            raise RuntimeError("WHISPER_SHERPA_MODEL_DIR must point to a sherpa transducer model")
-        model_dir = Path(model_dir_raw)
+        model_dir = resolve_sherpa_model_dir()
         encoder = model_dir / "encoder.onnx"
         decoder = model_dir / "decoder.onnx"
         joiner = model_dir / "joiner.onnx"
