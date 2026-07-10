@@ -17,6 +17,17 @@ except ImportError:  # pragma: no cover
 
 log = logging.getLogger("whisper-toggle.api")
 
+# WebSocket keepalive tuning for the live stream. A real recording makes the
+# server pause for whole seconds while faster-whisper transcribes/finishes; the
+# old 20s ping_timeout could fire during that gap and close the socket with
+# 1011 ("keepalive ping timeout"), which the tray reported as "Nothing
+# detected". We keep pinging often enough to detect a truly dead peer but give
+# a busy-but-alive server plenty of slack before declaring it gone.
+STREAM_PING_KWARGS = {
+    "ping_interval": 20,
+    "ping_timeout": 60,
+}
+
 
 class LocalApiClient:
     def __init__(
@@ -79,8 +90,7 @@ class LocalApiClient:
                 url,
                 open_timeout=self.open_timeout,
                 close_timeout=5,
-                ping_interval=20,
-                ping_timeout=20,
+                **STREAM_PING_KWARGS,
                 max_size=8 * 1024 * 1024,
             ) as ws:
                 chunk = 8192
@@ -205,8 +215,7 @@ class LiveStreamSession:
                 url,
                 open_timeout=self.open_timeout,
                 close_timeout=5,
-                ping_interval=20,
-                ping_timeout=20,
+                **STREAM_PING_KWARGS,
                 max_size=8 * 1024 * 1024,
             ) as ws:
                 self._ready.set()
