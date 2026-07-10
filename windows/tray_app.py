@@ -31,6 +31,7 @@ from whisper_toggle.config import AppConfig, app_data_dir, load_config, save_con
 from whisper_toggle.controller import State
 from whisper_toggle.device import resolve_device
 from whisper_toggle.icons import tray_icon, write_app_icon
+from whisper_toggle.live_typing import next_to_type
 from whisper_toggle.live_overlay import LivePreviewOverlay
 from whisper_toggle.logging_setup import setup_logging
 from whisper_toggle.paste import LiveTextSession
@@ -295,7 +296,11 @@ class TrayApp:
         # already captured so semi-live mode does not delay recording start. If
         # the streaming stack fails, a slower batch-preview loop keeps the live
         # proofing UI useful without touching the focused app.
-        if self.cfg.live_partials and self.cfg.streaming:
+        # Live streaming types confirmed words into the focused app as you speak
+        # (append-only). It runs on the streaming toggle alone; the preview
+        # overlay is a separate opt-in.
+        if self.cfg.streaming:
+            self._typed_live = ""
             threading.Thread(target=self._start_live_stream, daemon=True).start()
         elif self.cfg.live_partials:
             self._start_batch_preview_loop()
@@ -370,6 +375,12 @@ class TrayApp:
                 return
             log.warning("stream incomplete - batch fallback")
 
+        # If live streaming already typed text into the app, do NOT batch-insert
+        # the whole transcript on top of it (that would duplicate everything).
+        if self.cfg.streaming and getattr(self, "_typed_live", ""):
+            self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
+            return
+
         if not pcm or len(pcm) < 1000:
             if self.cfg.live_partials:
                 self._stop_preview(delay=0.5)
@@ -437,6 +448,18 @@ class TrayApp:
                 self._partial_timer.daemon = True
                 self._partial_timer.start()
 
+    def _type_live(self, confirmed: str) -> None:
+        """Type newly-confirmed words into the focused app, append-only."""
+        typed = getattr(self, "_typed_live", "")
+        new = next_to_type(typed, confirmed)
+        if not new:
+            return
+        try:
+            self.kb.type_text(new)
+            self._typed_live = typed + new
+        except Exception:
+            log.exception("live type failed")
+
     def _on_confirmed(self, text: str) -> None:
         with self._partial_lock:
             if self._partial_timer is not None:
@@ -445,28 +468,38 @@ class TrayApp:
         text = (text or "").strip()
         if not text:
             return
-        if text.startswith(self._preview_confirmed):
-            self._preview_confirmed = text
-        else:
-            self._preview_confirmed = self._join_preview(self._preview_confirmed, text)
-        self._update_preview(self._preview_confirmed)
+        # Live streaming: type newly-confirmed words straight into the app.
+        if self.cfg.streaming:
+            self._type_live(text)
+        # Keep the optional preview overlay in sync too.
+        if self.cfg.live_partials:
+            if text.startswith(self._preview_confirmed):
+                self._preview_confirmed = text
+            else:
+                self._preview_confirmed = self._join_preview(self._preview_confirmed, text)
+            self._update_preview(self._preview_confirmed)
 
     def _on_final(self, text: str) -> None:
         with self._partial_lock:
             if self._partial_timer is not None:
                 self._partial_timer.cancel()
                 self._partial_timer = None
+        text = (text or "").strip()
         try:
-            self.session.finalize(text)
+            if self.cfg.streaming:
+                self._type_live(text)          # type only the untyped tail
+            else:
+                self.session.finalize(text)
+        except Exception as exc:  # noqa: BLE001
+            log.error("final type failed: %s", exc)
+        if self.cfg.live_partials:
             if text:
                 self._update_preview(text)
                 self._stop_preview(delay=1.5)
-                self._notify(text[:60])
             else:
                 self._stop_preview(delay=0.5)
-        except Exception as exc:  # noqa: BLE001
-            log.error("final type failed: %s", exc)
-            self._stop_preview(delay=0.5)
+        if text:
+            self._notify(text[:60])
         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
 
     def _join_preview(self, left: str, right: str) -> str:
