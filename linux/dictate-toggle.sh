@@ -174,10 +174,16 @@ type_text() {
     local text="$1"
     sleep 0.05
     if is_wayland; then
-        if command -v wtype >/dev/null 2>&1; then
+        # GNOME/Mutter does not implement the virtual-keyboard protocol wtype
+        # needs, so ydotool (kernel uinput) is the reliable path on GNOME; wtype
+        # still works on wlroots compositors (Sway, etc.) as a fallback.
+        if command -v ydotool >/dev/null 2>&1; then
+            YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/user/$(id -u)/.ydotool_socket}" \
+                ydotool type -- "$text"
+        elif command -v wtype >/dev/null 2>&1; then
             wtype -- "$text"
         else
-            notify "Install wtype for Wayland typing" critical
+            notify "Install ydotool for Wayland typing (GNOME)" critical
             return 1
         fi
     else
