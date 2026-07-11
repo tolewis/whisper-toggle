@@ -93,6 +93,8 @@ def _preload_model_if_requested():
     """
     if env("WHISPER_API_PRELOAD", "0").strip() not in ("1", "true", "yes", "on"):
         return
+    if DEFAULT_DEVICE == "vulkan":
+        return  # whisper.cpp loads per-call; nothing to preload for the iGPU path
     try:
         model = get_model(DEFAULT_MODEL, DEFAULT_DEVICE, DEFAULT_COMPUTE)
         if env("WHISPER_API_REQUIRE_SMOKE", "0").strip() in ("1", "true", "yes", "on"):
@@ -380,6 +382,19 @@ def transcriptions(
         tmp.write(file.file.read())
         tmp.flush()
         tmp.close()
+
+        # Vulkan (Intel/AMD iGPU) goes through whisper.cpp — faster-whisper can't
+        # target it. Returns proper-cased, punctuated text directly.
+        if device == "vulkan":
+            from whisper_toggle.whispercpp import transcribe_whispercpp
+
+            text = transcribe_whispercpp(tmp_path, language=lang)
+            if not want_words:
+                return {"text": text}
+            return {
+                "text": text, "language": lang, "duration": 0.0,
+                "segments": [], "words": [], "task": "transcribe",
+            }
 
         whisper = get_model(model_name, device, compute_type)
         segments_iter, info = whisper.transcribe(
