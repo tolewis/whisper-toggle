@@ -178,8 +178,11 @@ type_text() {
         # needs, so ydotool (kernel uinput) is the reliable path on GNOME; wtype
         # still works on wlroots compositors (Sway, etc.) as a fallback.
         if command -v ydotool >/dev/null 2>&1; then
+            # Default 20ms delay + 20ms hold (~40ms/char) is slow for a sentence.
+            # ~5ms/char is a big speedup and still reliable across apps.
             YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/user/$(id -u)/.ydotool_socket}" \
-                ydotool type -- "$text"
+                ydotool type --key-delay "${YDOTOOL_KEY_DELAY:-1}" \
+                    --key-hold "${YDOTOOL_KEY_HOLD:-4}" -- "$text"
         elif command -v wtype >/dev/null 2>&1; then
             wtype -- "$text"
         else
