@@ -449,7 +449,11 @@ async def audio_stream(websocket: WebSocket):
     )
     lang = websocket.query_params.get("language") or DEFAULT_LANG
     try:
-        processor = create_stream_processor(model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang)
+        # Build off the event loop: loading the sherpa/whisper model is slow and
+        # would otherwise block the WS handshake, timing out the client.
+        processor = await asyncio.to_thread(
+            create_stream_processor, model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("stream processor init failed")
         await _send_json(websocket, {"type": "error", "error": f"stream_init_failed: {exc}"})

@@ -35,7 +35,7 @@ log = setup_logging("whisper-toggle.settings")
 
 RUNTIME_URL = "http://127.0.0.1:8788/v1/runtime"
 
-HOTKEY_CHOICES = ["ctrl+shift+h", "ctrl+`", "f9"]
+HOTKEY_CHOICES = ["ctrl+`", "ctrl+shift+h", "f9"]
 DEVICE_CHOICES = ["auto", "cuda", "cpu", "vulkan"]
 MODEL_CHOICES = ["", "tiny.en", "base.en", "small.en", "medium.en"]
 STREAM_ENGINE_CHOICES = ["sherpa", "whisper_streaming"]

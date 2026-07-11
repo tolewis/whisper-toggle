@@ -11,6 +11,9 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 
+# Process-wide cache of loaded OnlineRecognizers, keyed by device.
+_RECOGNIZER_CACHE: dict = {}
+
 
 def resolve_sherpa_model_dir(env: Optional[str] = None, models_root=None) -> Path:
     """Locate the sherpa transducer model without requiring an env var.
@@ -105,6 +108,13 @@ class SherpaStreamProcessor:
 
     @staticmethod
     def _build_recognizer(device: str):
+        # Cache the loaded recognizer process-wide: loading is slow (~seconds),
+        # and the recognizer is stateless across streams (each connection calls
+        # create_stream()), so it is safe and much faster to reuse one.
+        cached = _RECOGNIZER_CACHE.get(device)
+        if cached is not None:
+            return cached
+
         import sherpa_onnx
 
         model_dir = resolve_sherpa_model_dir()
@@ -116,7 +126,7 @@ class SherpaStreamProcessor:
         if missing:
             raise RuntimeError("missing sherpa model files: " + ", ".join(missing))
 
-        return sherpa_onnx.OnlineRecognizer.from_transducer(
+        recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
             tokens=str(tokens),
             encoder=str(encoder),
             decoder=str(decoder),
@@ -131,3 +141,5 @@ class SherpaStreamProcessor:
             rule2_min_trailing_silence=1.2,
             rule3_min_utterance_length=20.0,
         )
+        _RECOGNIZER_CACHE[device] = recognizer
+        return recognizer

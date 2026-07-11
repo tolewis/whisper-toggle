@@ -46,7 +46,7 @@ def test_hotkey_aliases_normalized_on_load(tmp_path: Path):
 
 def test_load_missing_returns_defaults(tmp_path: Path):
     cfg = load_config(tmp_path / "missing.json")
-    assert cfg.hotkey == "ctrl+shift+h"
+    assert cfg.hotkey == "ctrl+`"
     assert cfg.streaming is False
 
 
