@@ -102,9 +102,11 @@ class SherpaStreamProcessor:
 
     def _result_text(self) -> str:
         result = self.recognizer.get_result(self.stream)
-        if isinstance(result, str):
-            return result.strip()
-        return (getattr(result, "text", "") or "").strip()
+        text = result if isinstance(result, str) else (getattr(result, "text", "") or "")
+        # The zipformer-en model emits ALL CAPS with no punctuation; lowercase it
+        # so the live text reads naturally. The hybrid batch pass restores proper
+        # casing/punctuation on the final.
+        return text.strip().lower()
 
     @staticmethod
     def _build_recognizer(device: str):
