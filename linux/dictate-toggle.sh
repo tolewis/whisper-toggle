@@ -190,6 +190,20 @@ type_text() {
     fi
 }
 
+# Insert transcribed text at the cursor. Always fill the clipboard (manual-paste
+# fallback), then on Wayland TYPE it directly with wtype — Mutter frequently
+# ignores wtype's synthetic Ctrl+V, so the clipboard fills but nothing pastes.
+# On X11, Ctrl+V via xdotool is reliable.
+insert_text() {
+    local text="$1"
+    printf '%s' "$text" | copy_to_clipboard
+    if is_wayland && command -v wtype >/dev/null 2>&1; then
+        type_text "$text"
+    else
+        paste_text
+    fi
+}
+
 start_recording_batch() {
     rm -f "$WAV_FILE"
     notify "Recording..."
@@ -266,8 +280,7 @@ stop_batch() {
         exit 0
     fi
 
-    printf '%s' "$text" | copy_to_clipboard
-    paste_text
+    insert_text "$text"
 
     local chars=${#text}
     local preview="${text:0:60}"
@@ -434,8 +447,7 @@ stop_streaming() {
         exit 0
     fi
 
-    printf '%s' "$text" | copy_to_clipboard
-    paste_text
+    insert_text "$text"
     local chars=${#text}
     local preview="${text:0:60}"
     [[ ${#text} -gt 60 ]] && preview="${preview}..."
