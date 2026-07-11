@@ -434,6 +434,12 @@ class TrayApp:
         self._set_state(State.IDLE, f"Ready ({self.cfg.hotkey})")
 
     def _on_partial(self, text: str) -> None:
+        # Live streaming: type the growing hypothesis into the app as you speak
+        # (append-only via next_to_type). Partials can revise; the hybrid batch
+        # correction at stop fixes rough edges. This makes text appear
+        # continuously rather than only on pauses (confirmed segments).
+        if self.cfg.streaming:
+            self._type_live(text)
         if not self.cfg.live_partials:
             return
         delay = max(0, int(self.cfg.partial_debounce_ms)) / 1000.0
