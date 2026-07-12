@@ -174,10 +174,19 @@ type_text() {
     local text="$1"
     sleep 0.05
     if is_wayland; then
-        if command -v wtype >/dev/null 2>&1; then
+        # GNOME/Mutter does not implement the virtual-keyboard protocol wtype
+        # needs, so ydotool (kernel uinput) is the reliable path on GNOME; wtype
+        # still works on wlroots compositors (Sway, etc.) as a fallback.
+        if command -v ydotool >/dev/null 2>&1; then
+            # Default 20ms delay + 20ms hold (~40ms/char) is slow for a sentence.
+            # ~5ms/char is a big speedup and still reliable across apps.
+            YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/user/$(id -u)/.ydotool_socket}" \
+                ydotool type --key-delay "${YDOTOOL_KEY_DELAY:-1}" \
+                    --key-hold "${YDOTOOL_KEY_HOLD:-4}" -- "$text"
+        elif command -v wtype >/dev/null 2>&1; then
             wtype -- "$text"
         else
-            notify "Install wtype for Wayland typing" critical
+            notify "Install ydotool for Wayland typing (GNOME)" critical
             return 1
         fi
     else
@@ -187,6 +196,20 @@ type_text() {
             notify "Install xdotool for typing support" critical
             return 1
         fi
+    fi
+}
+
+# Insert transcribed text at the cursor. Always fill the clipboard (manual-paste
+# fallback), then on Wayland TYPE it directly with wtype — Mutter frequently
+# ignores wtype's synthetic Ctrl+V, so the clipboard fills but nothing pastes.
+# On X11, Ctrl+V via xdotool is reliable.
+insert_text() {
+    local text="$1"
+    printf '%s' "$text" | copy_to_clipboard
+    if is_wayland && command -v wtype >/dev/null 2>&1; then
+        type_text "$text"
+    else
+        paste_text
     fi
 }
 
@@ -266,8 +289,7 @@ stop_batch() {
         exit 0
     fi
 
-    printf '%s' "$text" | copy_to_clipboard
-    paste_text
+    insert_text "$text"
 
     local chars=${#text}
     local preview="${text:0:60}"
@@ -434,8 +456,7 @@ stop_streaming() {
         exit 0
     fi
 
-    printf '%s' "$text" | copy_to_clipboard
-    paste_text
+    insert_text "$text"
     local chars=${#text}
     local preview="${text:0:60}"
     [[ ${#text} -gt 60 ]] && preview="${preview}..."

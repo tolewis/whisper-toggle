@@ -10,14 +10,16 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 
-# Ctrl+Shift+H is the reliable default on Windows 11 (Win+H is owned by OS voice typing).
-DEFAULT_HOTKEY = "ctrl+shift+h"
-CONFIG_VERSION = "2.2.0"
+# Ctrl+` is the default (native RegisterHotKey, no OS conflict). Ctrl+Shift+H is
+# an alternative; Win+H is reserved by Windows voice typing.
+DEFAULT_HOTKEY = "ctrl+`"
+CONFIG_VERSION = "2.3.0"
 
 # Windows 11 reserves Win+H for its voice-typing launcher and will not let an app
 # reliably claim it, so it is not offered as an option and any stored value heals
 # to the default.
 UNSUPPORTED_HOTKEYS = frozenset({"win+h"})
+STREAM_ENGINES = frozenset({"sherpa", "whisper_streaming"})
 
 
 @dataclass
@@ -33,6 +35,8 @@ class AppConfig:
     version: str = CONFIG_VERSION
     # Live partials require streaming; off by default until WS is stable on Windows.
     live_partials: bool = False
+    stream_engine: str = "sherpa"
+    hybrid_final_correct: bool = True
     suppress_hotkey: bool = True  # capture Win+H so OS voice typing does not fire
     audible_cues: bool = True  # ding on record start/stop (batch shows no text until stop)
 
@@ -95,6 +99,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     if hk in UNSUPPORTED_HOTKEYS:
         hk = DEFAULT_HOTKEY
     cfg.hotkey = hk
+    engine = (cfg.stream_engine or "sherpa").strip().lower()
+    cfg.stream_engine = engine if engine in STREAM_ENGINES else "sherpa"
     cfg.version = CONFIG_VERSION
     return cfg
 

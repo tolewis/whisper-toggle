@@ -1,20 +1,20 @@
-; installer.iss - Inno Setup script for Whisper Toggle v2.2.0
+; installer.iss - Inno Setup script for Whisper Toggle v2.3.0
 ;
 ; Build:
 ;   1. powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
-;   2. ISCC compiles this into WhisperToggle-Setup-2.2.0.exe
+;   2. ISCC compiles this into WhisperToggle-Setup-2.3.0.exe
 
 [Setup]
 AppId={{A7D3F2E1-B8C4-4F5A-9E6D-1C2B3A4F5E6D}
 AppName=Whisper Toggle
-AppVersion=2.2.0
-AppVerName=Whisper Toggle 2.2.0
+AppVersion=2.3.0
+AppVerName=Whisper Toggle 2.3.0
 AppPublisher=Tim Lewis
 AppPublisherURL=https://github.com/tolewis/Whisper-Toggle
 AppSupportURL=https://github.com/tolewis/Whisper-Toggle/issues
 DefaultDirName={localappdata}\Whisper Toggle
 DefaultGroupName=Whisper Toggle
-OutputBaseFilename=WhisperToggle-Setup-2.2.0
+OutputBaseFilename=WhisperToggle-Setup-2.3.0
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\assets\icon.ico
 Compression=lzma2/ultra64
@@ -45,6 +45,7 @@ Source: "..\build\stage\tray_app.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_gui.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_web.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\settings_web.html"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\stage\get-sherpa-model.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\stage\whisper_toggle\*"; DestDir: "{app}\whisper_toggle"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\build\stage\vendor\*"; DestDir: "{app}\vendor"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\build\stage\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs

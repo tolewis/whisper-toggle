@@ -5,11 +5,17 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from typing import Callable, Optional
 
 
 VALID_OVERRIDES = frozenset({"auto", "cuda", "cpu", "vulkan"})
+
+# Never flash a console window when probing devices (nvidia-smi etc.) — the tray
+# is a windowless pythonw app, and a probe on every settings reload otherwise
+# pops a black console. CREATE_NO_WINDOW only exists on Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform.startswith("win") else 0
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,7 @@ def _default_probe_cuda() -> ProbeResult:
             ],
             text=True,
             timeout=5,
+            creationflags=_NO_WINDOW,
         )
         # Sum across GPUs; use first line for primary
         lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
@@ -123,6 +130,7 @@ def _default_probe_vulkan() -> ProbeResult:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                creationflags=_NO_WINDOW,
             )
             blob = (proc.stdout or "") + (proc.stderr or "")
             if "vulkan" in blob.lower() or os.getenv("WHISPER_FORCE_VULKAN") == "1":

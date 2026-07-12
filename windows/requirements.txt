@@ -9,6 +9,7 @@ pyperclip
 pystray
 Pillow
 websockets>=15.0
+sherpa-onnx
 winotify; platform_system=="Windows"
 # CUDA 12 DLLs needed by CTranslate2 on Windows GPU hosts (cuBLAS + cudart).
 nvidia-cublas-cu12==12.9.1.4; platform_system=="Windows"

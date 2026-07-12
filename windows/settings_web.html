@@ -16,14 +16,16 @@
            --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.08);}
   }
   *{box-sizing:border-box}
-  html,body{margin:0}
+  html,body{margin:0;height:100%}
   body{
     background:var(--bg); color:var(--text);
     font:14px/1.4 -apple-system,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;
-    -webkit-font-smoothing:antialiased; padding:16px 20px 18px;
+    -webkit-font-smoothing:antialiased; padding:16px 20px 10px;
+    height:100vh; display:flex; flex-direction:column; overflow:hidden;
   }
-  .head{display:flex;align-items:center;gap:12px;margin:2px 2px 16px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .head{display:flex;align-items:center;gap:12px;margin:2px 2px 14px;flex:0 0 auto}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;
+    flex:1 1 auto; min-height:0; overflow:hidden}
   .col{display:flex;flex-direction:column;gap:16px}
   .col .card{margin-bottom:0}
   .logo{width:34px;height:34px;border-radius:9px;background:
@@ -70,7 +72,7 @@
   .sw input:checked + .track + .knob{transform:translateX(18px);background:#06281d}
 
   .footer{display:flex;gap:10px;justify-content:flex-end;align-items:center;
-    padding:16px 2px 2px;margin-top:6px}
+    padding:12px 2px 2px;margin-top:auto;flex:0 0 auto}
   .link{margin-right:auto;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:none}
   .link:hover{color:var(--text)}
   button{font:inherit;border-radius:10px;padding:9px 18px;cursor:pointer;border:1px solid var(--line)}
@@ -97,7 +99,7 @@
     <div class="row"><div class="txt"><b>Dictation hotkey</b><small>Press once to start, again to stop.</small></div>
       <input type="text" id="hotkey" style="width:150px" /></div>
     <div class="chips" id="hotkeyChips"></div>
-    <div class="hint">Ctrl+Shift+H is the most reliable on Windows 11. Win+H is not offered — Windows reserves it for its own voice typing.</div>
+    <div class="hint">Ctrl+` is the default; Ctrl+Shift+H also works. Win+H is not offered — Windows reserves it for its own voice typing.</div>
   </div>
 
   <div class="card">
@@ -106,6 +108,8 @@
       <select id="device"></select></div>
     <div class="row"><div class="txt"><b>Model</b><small>Bigger = more accurate, a little slower. medium.en is a great fit for an NVIDIA GPU.</small></div>
       <select id="model"></select></div>
+    <div class="row"><div class="txt"><b>Live engine</b><small>Sherpa is streaming-native; Whisper streaming remains as fallback.</small></div>
+      <select id="stream_engine"></select></div>
   </div>
   </div>
 
@@ -116,6 +120,8 @@
       <label class="sw"><input type="checkbox" id="audible_cues"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Live streaming <span class="beta">BETA</span></b><small>Transcribe while you speak (higher CPU).</small></div>
       <label class="sw"><input type="checkbox" id="streaming"><span class="track"></span><span class="knob"></span></label></div>
+    <div class="row"><div class="txt"><b>Correct with accurate model at stop</b><small>Replace rough live text with the batch transcript.</small></div>
+      <label class="sw"><input type="checkbox" id="hybrid_final_correct"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Live preview overlay <span class="beta">BETA</span></b><small>Shows text as you speak; inserts once at the end.</small></div>
       <label class="sw"><input type="checkbox" id="live_partials"><span class="track"></span><span class="knob"></span></label></div>
     <div class="row"><div class="txt"><b>Start with Windows</b><small>Launch automatically when you sign in.</small></div>
@@ -141,8 +147,8 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const BOOLS = ["audible_cues","streaming","live_partials","autostart"];
-  const TEXT  = ["hotkey","device","model","partial_debounce_ms","hardware_catchup_ms"];
+  const BOOLS = ["audible_cues","streaming","hybrid_final_correct","live_partials","autostart"];
+  const TEXT  = ["hotkey","device","model","stream_engine","partial_debounce_ms","hardware_catchup_ms"];
   let CHOICES = {};
 
   function fillSelect(el, values, current){
@@ -170,6 +176,7 @@
     const c = state.config; CHOICES = state.choices || {};
     fillSelect($("device"), CHOICES.device||["auto"], c.device_override);
     fillSelect($("model"), CHOICES.model||[""], c.model);
+    fillSelect($("stream_engine"), CHOICES.stream_engine||["sherpa"], c.stream_engine);
     $("hotkey").value = c.hotkey; renderChips(c.hotkey);
     $("hotkey").oninput = () => markChips($("hotkey").value.trim().toLowerCase());
     BOOLS.forEach(k => $(k).checked = !!c[k]);
@@ -184,6 +191,7 @@
   function collect(){
     const p = { hotkey:$("hotkey").value.trim().toLowerCase(),
       device_override:$("device").value, model:$("model").value,
+      stream_engine:$("stream_engine").value,
       partial_debounce_ms:+$("partial_debounce_ms").value||0,
       hardware_catchup_ms:+$("hardware_catchup_ms").value||0 };
     BOOLS.forEach(k => p[k] = $(k).checked);
@@ -195,7 +203,7 @@
     apply(state);
     $("save").onclick = async () => {
       const r = await window.pywebview.api.save(collect());
-      if (r && r.ok){ const s=$("saved"); s.classList.add("show"); setTimeout(()=>s.classList.remove("show"),1600); }
+      if (r && r.ok){ window.pywebview.api.close_window(); }   // save AND close
     };
     $("cancel").onclick = () => window.pywebview.api.close_window();
     $("openLogs").onclick = () => window.pywebview.api.open_logs();

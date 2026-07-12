@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from whisper_toggle.config import (  # noqa: E402
     AppConfig,
+    STREAM_ENGINES,
     UNSUPPORTED_HOTKEYS,
     app_data_dir,
     default_config_path,
@@ -34,9 +35,10 @@ log = setup_logging("whisper-toggle.settings")
 
 RUNTIME_URL = "http://127.0.0.1:8788/v1/runtime"
 
-HOTKEY_CHOICES = ["ctrl+shift+h", "ctrl+`", "f9"]
+HOTKEY_CHOICES = ["ctrl+`", "ctrl+shift+h", "f9"]
 DEVICE_CHOICES = ["auto", "cuda", "cpu", "vulkan"]
 MODEL_CHOICES = ["", "tiny.en", "base.en", "small.en", "medium.en"]
+STREAM_ENGINE_CHOICES = ["sherpa", "whisper_streaming"]
 
 
 def _write_signal(name: str) -> None:
@@ -70,6 +72,8 @@ class Api:
                 "model": cfg.model,
                 "streaming": cfg.streaming,
                 "live_partials": cfg.live_partials,
+                "stream_engine": cfg.stream_engine,
+                "hybrid_final_correct": cfg.hybrid_final_correct,
                 "autostart": cfg.autostart,
                 "audible_cues": cfg.audible_cues,
                 "partial_debounce_ms": cfg.partial_debounce_ms,
@@ -85,6 +89,7 @@ class Api:
                 "hotkey": HOTKEY_CHOICES,
                 "device": DEVICE_CHOICES,
                 "model": MODEL_CHOICES,
+                "stream_engine": STREAM_ENGINE_CHOICES,
             },
         }
 
@@ -98,6 +103,11 @@ class Api:
             cfg.model = str(payload.get("model", cfg.model))
             cfg.streaming = bool(payload.get("streaming", cfg.streaming))
             cfg.live_partials = bool(payload.get("live_partials", cfg.live_partials))
+            stream_engine = str(payload.get("stream_engine", cfg.stream_engine)).strip().lower()
+            cfg.stream_engine = stream_engine if stream_engine in STREAM_ENGINES else "sherpa"
+            cfg.hybrid_final_correct = bool(
+                payload.get("hybrid_final_correct", cfg.hybrid_final_correct)
+            )
             cfg.autostart = bool(payload.get("autostart", cfg.autostart))
             cfg.audible_cues = bool(payload.get("audible_cues", cfg.audible_cues))
             cfg.partial_debounce_ms = int(payload.get("partial_debounce_ms", cfg.partial_debounce_ms))
@@ -155,9 +165,9 @@ def main() -> None:
             "Whisper Toggle — Settings",
             html=html,
             js_api=api,
-            width=860,
-            height=680,
-            resizable=True,
+            width=900,
+            height=840,
+            resizable=False,
             background_color="#14161a",
         )
         webview.start()

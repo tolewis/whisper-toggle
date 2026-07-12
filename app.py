@@ -50,6 +50,7 @@ except Exception:
     pass
 
 from faster_whisper import WhisperModel
+from whisper_toggle.sherpa_stream import SherpaStreamProcessor
 
 try:
     from whisper_toggle.logging_setup import setup_logging
@@ -77,7 +78,7 @@ OPENAI_MODEL_ALIASES = {
     "whisper-1": DEFAULT_MODEL,
 }
 
-APP_VERSION = env("WHISPER_API_VERSION", "2.2.0")
+APP_VERSION = env("WHISPER_API_VERSION", "2.3.0")
 app = FastAPI(title="Local Whisper API", version=APP_VERSION)
 
 
@@ -92,6 +93,8 @@ def _preload_model_if_requested():
     """
     if env("WHISPER_API_PRELOAD", "0").strip() not in ("1", "true", "yes", "on"):
         return
+    if DEFAULT_DEVICE == "vulkan":
+        return  # whisper.cpp loads per-call; nothing to preload for the iGPU path
     try:
         model = get_model(DEFAULT_MODEL, DEFAULT_DEVICE, DEFAULT_COMPUTE)
         if env("WHISPER_API_REQUIRE_SMOKE", "0").strip() in ("1", "true", "yes", "on"):
@@ -287,6 +290,9 @@ class StreamingASRProcessor:
 
 
 def create_stream_processor(model_name: str, device: str, compute_type: str, language: str):
+    engine = env("WHISPER_STREAM_ENGINE", "sherpa").strip().lower()
+    if engine == "sherpa":
+        return SherpaStreamProcessor(model_name, device, compute_type, language)
     return StreamingASRProcessor(model_name, device, compute_type, language)
 
 
@@ -377,6 +383,19 @@ def transcriptions(
         tmp.flush()
         tmp.close()
 
+        # Vulkan (Intel/AMD iGPU) goes through whisper.cpp — faster-whisper can't
+        # target it. Returns proper-cased, punctuated text directly.
+        if device == "vulkan":
+            from whisper_toggle.whispercpp import transcribe_whispercpp
+
+            text = transcribe_whispercpp(tmp_path, language=lang)
+            if not want_words:
+                return {"text": text}
+            return {
+                "text": text, "language": lang, "duration": 0.0,
+                "segments": [], "words": [], "task": "transcribe",
+            }
+
         whisper = get_model(model_name, device, compute_type)
         segments_iter, info = whisper.transcribe(
             tmp_path,
@@ -445,7 +464,11 @@ async def audio_stream(websocket: WebSocket):
     )
     lang = websocket.query_params.get("language") or DEFAULT_LANG
     try:
-        processor = create_stream_processor(model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang)
+        # Build off the event loop: loading the sherpa/whisper model is slow and
+        # would otherwise block the WS handshake, timing out the client.
+        processor = await asyncio.to_thread(
+            create_stream_processor, model_name, DEFAULT_DEVICE, DEFAULT_COMPUTE, lang
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("stream processor init failed")
         await _send_json(websocket, {"type": "error", "error": f"stream_init_failed: {exc}"})
