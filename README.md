@@ -64,9 +64,13 @@ powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
 
 Requires Inno Setup 6 on the build host (present on jubiku).
 
-## Linux (stable)
+## Linux
 
-See [docs/linux-setup.md](docs/linux-setup.md). Hotkeys Super+H / Ctrl+`.
+See [docs/linux-setup.md](docs/linux-setup.md) for the basics, and
+[docs/linux-vulkan.md](docs/linux-vulkan.md) for **GPU acceleration on Intel/AMD
+integrated graphics via whisper.cpp Vulkan** (batch transcription) plus GNOME
+Wayland auto-type via `ydotool`. The engine backend is selectable per device:
+`faster-whisper` on NVIDIA/CPU, `whisper.cpp` (Vulkan) on iGPUs.
 
 ## Requirements
 
@@ -78,6 +82,8 @@ See [docs/linux-setup.md](docs/linux-setup.md). Hotkeys Super+H / Ctrl+`.
 
 | Version | Date | What's new |
 |---------|------|-----------|
+| **2.3.0** | 2026-07 | Real-time streaming via sherpa-onnx transducer (types as you speak) with a hybrid final-correct pass (accurate batch replaces the rough live text at stop); **Linux GPU acceleration via whisper.cpp Vulkan** (Intel/AMD iGPUs, e.g. Iris Xe ~13x realtime); GNOME Wayland auto-type via ydotool; audible cues toggle |
+| **2.2.0** | 2026-07 | Redesigned webview Settings (fixed-size, real toggles, live status); Win+H removed (Windows reserves it); calmer audible cues; atomic config; streaming/overlay robustness; jubiku-validated |
 | **2.0.x** | 2026-07 | Windows product: reliable Ctrl+Shift+H default, tray GUI, settings, clipboard paste injection, optional Win+H/live partials |
 | **2.0.4** | 2026-07 | Adds startup loading notice plus deterministic ASR candidate benchmarks, noisy corpus tooling, and sherpa-onnx online prototype benchmark support |
 | **2.0.3** | 2026-07 | Windows installer bundles CUDA 12 cuBLAS/cudart and fails install unless local model/GPU/CPU smoke validation passes |
